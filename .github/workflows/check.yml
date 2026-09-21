@@ -1,0 +1,73 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Linux and macOS both run the recipe a developer runs, through the same
+  # devShell, so the two cannot drift apart. Linux matters most: it is the host
+  # vitro is least often developed on, and the one where a portability mistake
+  # would otherwise go unnoticed until somebody tried it.
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # The same recipe a developer runs, so CI cannot drift from it.
+      - run: nix develop --command just check
+
+  # Windows gets its own job because it cannot have the shared one: there is no
+  # nix here, so the checks are spelled out instead of going through `just`.
+  #
+  # Everything that touches a Unix socket, a file mode or a signal is behind
+  # `cfg(unix)` with a Windows counterpart, and until this job existed nothing
+  # compiled those branches at all — a Windows host was a claim rather than a
+  # fact. The fake-binary scaffolding the integration tests use is still
+  # Unix-only, so those tests skip themselves here; what this proves is that the
+  # crate builds, lints and passes its unit tests on Windows, not that a VM runs.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test
