@@ -1,6 +1,13 @@
 pub mod build;
 pub mod destroy;
+pub mod doctor;
 pub mod exec;
+pub mod forward;
+pub mod inspect;
+pub mod keygen;
 pub mod ls;
+pub mod promote;
 pub mod run;
+pub mod setup;
+pub mod sshconfig;
 pub mod status;

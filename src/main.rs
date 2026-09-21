@@ -5,7 +5,10 @@ use anyhow::{bail, Result};
 use clap::Parser;
 
 use vitro::cli::{Cli, Command};
-use vitro::commands::{build, destroy, exec, ls, run, status};
+use vitro::commands::{
+    build, destroy, doctor, exec, forward, inspect, keygen, ls, promote, run, setup, sshconfig,
+    status,
+};
 use vitro::{golden, Config, Golden, Paths, Store, SysinfoProbe};
 
 /// Exit codes, as promised to callers: 0 success, 1 failure, 2 bad command
@@ -36,13 +39,11 @@ fn main() -> ExitCode {
 fn init_tracing() {
     use tracing_subscriber::{fmt, EnvFilter};
 
-    let filter = match EnvFilter::try_from_env("VITRO_LOG") {
-        Ok(filter) => filter,
-        Err(_) => return,
-    };
+    let filter = EnvFilter::try_from_env("VITRO_LOG").unwrap_or_else(|_| EnvFilter::new("warn"));
     let _ = fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .with_target(false)
         .try_init();
 }
 
@@ -60,6 +61,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                 for name in run::reap_dead(&store, &SysinfoProbe::new())? {
                     eprintln!("pruned {name}");
                 }
+                sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
             }
             let listing = ls::collect(&paths, &store, &config, &SysinfoProbe::new(), ls::now())?;
 
@@ -101,6 +103,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Run { image, name }) => {
             let record = run::run(&paths, &config, run::Options { image, name })?;
+            sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
             println!(
                 "{} is up: ssh {}@{} -p {}",
                 record.name, record.ssh_user, record.ssh_host, record.ssh_port
@@ -110,7 +113,91 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Exec { name, command }) => exec::exec(&paths, &config, &name, &command),
 
+        Some(Command::Promote {
+            name,
+            as_name,
+            keep,
+            force,
+        }) => {
+            let promoted = promote::promote(
+                &paths,
+                &config,
+                &promote::Options {
+                    name,
+                    as_name,
+                    keep,
+                    force,
+                },
+            )?;
+            sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
+            println!("promoted {} to {}", promoted.vm, promoted.golden.display());
+            if promoted.kept {
+                // Being explicit because the record is indistinguishable from a
+                // crashed VM, and the next `run` reaps it on those grounds.
+                println!(
+                    "{} is stopped and will be cleared by the next `vitro run`",
+                    promoted.vm
+                );
+            }
+            if let Some(hint) = repoint_hint(&paths, &config, &promoted.image, &promoted.golden) {
+                println!("{hint}");
+            }
+            Ok(0)
+        }
+
+        Some(Command::SshConfig { name, write }) => {
+            let text = sshconfig::render(&paths, &config, &SysinfoProbe::new(), name.as_deref())?;
+            if write {
+                let path = sshconfig::write(&paths, &text)?;
+                println!("wrote {}", path.display());
+            } else {
+                print!("{text}");
+            }
+            Ok(0)
+        }
+
+        Some(Command::Forward { name, ports }) => forward::forward(&paths, &config, &name, &ports),
+
+        Some(Command::Port { name }) => {
+            println!("{}", inspect::port(&paths, &SysinfoProbe::new(), &name)?);
+            Ok(0)
+        }
+
+        Some(Command::Inspect { name }) => {
+            let inspected = inspect::inspect(&paths, &SysinfoProbe::new(), &name)?;
+            let mut stdout = std::io::stdout().lock();
+            serde_json::to_writer_pretty(&mut stdout, &inspected)?;
+            stdout.write_all(b"\n")?;
+            Ok(0)
+        }
+
+        Some(Command::Setup) => setup::setup(&paths, &config),
+
+        Some(Command::Keygen { force }) => {
+            let generated = keygen::keygen(&paths, &config, force)?;
+            if generated.existed {
+                println!(
+                    "{} already exists; pass --force to replace it",
+                    generated.path.display()
+                );
+            } else {
+                println!("wrote {}", generated.path.display());
+            }
+            Ok(0)
+        }
+
+        Some(Command::Doctor) => doctor::report(&paths, &config),
+
+        Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
+
         Some(Command::Ssh { name }) => exec::interactive(&paths, &config, &name),
+
+        // The command line describes the whole tool on purpose, so the parts
+        // that are not built yet have to say so rather than silently do
+        // nothing. See `cli.rs`.
+        Some(Command::Screenshot { .. } | Command::Launch { .. }) => {
+            bail!("that command is not built yet")
+        }
 
         Some(Command::Destroy {
             name,
@@ -123,6 +210,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                 (None, true) => destroy::destroy_all(&paths, &config, &options)?,
                 (None, false) => bail!("name a VM to destroy, or pass --all"),
             };
+            sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
             if outcomes.is_empty() {
                 println!("no VMs to destroy");
             }
@@ -142,13 +230,6 @@ fn dispatch(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-
-        Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
-
-        // The command line describes the whole tool on purpose, so the parts
-        // that are not built yet have to say so rather than silently do
-        // nothing. See `cli.rs`.
-        Some(_) => bail!("that command is not built yet"),
     }
 }
 

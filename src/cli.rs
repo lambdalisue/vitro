@@ -108,6 +108,16 @@ pub enum Command {
     /// Print a VM's record as JSON
     Inspect { name: String },
 
+    /// Get from nothing to a guest you can build, step by step
+    Setup,
+
+    /// Create the SSH key vitro authorises guests with
+    Keygen {
+        /// Replace an existing key, locking out every image built with the old one
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Check everything `run` and `build` depend on
     Doctor,
 
