@@ -3,6 +3,7 @@ pub mod destroy;
 pub mod doctor;
 pub mod exec;
 pub mod forward;
+pub mod gui;
 pub mod inspect;
 pub mod keygen;
 pub mod ls;

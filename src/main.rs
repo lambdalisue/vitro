@@ -6,8 +6,8 @@ use clap::Parser;
 
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
-    build, destroy, doctor, exec, forward, inspect, keygen, ls, promote, run, setup, sshconfig,
-    status,
+    build, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
+    sshconfig, status,
 };
 use vitro::{golden, Config, Golden, Paths, Store, SysinfoProbe};
 
@@ -188,16 +188,21 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Doctor) => doctor::report(&paths, &config),
 
+        Some(Command::Screenshot { name, out }) => {
+            let path = gui::screenshot(&paths, &name, out.as_deref())?;
+            println!("{}", path.display());
+            Ok(0)
+        }
+
+        Some(Command::Launch { name, command }) => {
+            gui::launch(&paths, &config, &name, &command)?;
+            println!("launched {} in {name}", command.join(" "));
+            Ok(0)
+        }
+
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
         Some(Command::Ssh { name }) => exec::interactive(&paths, &config, &name),
-
-        // The command line describes the whole tool on purpose, so the parts
-        // that are not built yet have to say so rather than silently do
-        // nothing. See `cli.rs`.
-        Some(Command::Screenshot { .. } | Command::Launch { .. }) => {
-            bail!("that command is not built yet")
-        }
 
         Some(Command::Destroy {
             name,
