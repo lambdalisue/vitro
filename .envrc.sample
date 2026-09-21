@@ -1,0 +1,2 @@
+# Copy to .envrc and run `direnv allow` to load the Nix devShell on cd.
+use flake
