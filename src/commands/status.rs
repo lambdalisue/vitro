@@ -24,7 +24,7 @@ pub fn collect(
     name: Option<&str>,
 ) -> Result<Status> {
     let store = Store::new(paths.state_dir());
-    let mut listing = ls::collect(&store, config, probe, ls::now())?;
+    let mut listing = ls::collect(paths, &store, config, probe, ls::now())?;
 
     if let Some(name) = name {
         let resolved = store.resolve(name)?;

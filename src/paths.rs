@@ -87,6 +87,17 @@ impl Paths {
         self.cache_dir.join("media")
     }
 
+    /// Installation media the user supplies, for the files vitro is not allowed
+    /// to fetch.
+    ///
+    /// Data rather than cache, and a place vitro names rather than one it goes
+    /// looking for: a seven-gigabyte ISO that cannot be downloaded again
+    /// unattended does not belong somewhere a cleaner may remove, and "put it
+    /// here" is a shorter instruction than "tell me where you put it".
+    pub fn media_dir(&self) -> PathBuf {
+        self.data_dir.join("media")
+    }
+
     pub fn state_dir(&self) -> &Path {
         &self.state_dir
     }

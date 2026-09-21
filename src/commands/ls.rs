@@ -12,7 +12,7 @@ use serde::Serialize;
 use time::OffsetDateTime;
 
 use crate::ByteSize;
-use crate::{Config, Golden};
+use crate::{golden, Config, Golden, Paths};
 use crate::{Entry, Liveness, ProcessProbe, Store};
 
 const OVERLAY_FILE: &str = "overlay.qcow2";
@@ -68,6 +68,7 @@ pub struct Listing {
 /// Collect the snapshot. `now` is passed in so uptimes are reproducible in
 /// tests.
 pub fn collect(
+    paths: &Paths,
     store: &Store,
     config: &Config,
     probe: &impl ProcessProbe,
@@ -120,6 +121,28 @@ pub fn collect(
                     size_bytes: size,
                 }
             }
+            // Unset: the row is about the image `run` would actually start, so
+            // it names the newest build rather than the setting that is not
+            // there.
+            Golden::Latest => match golden::newest(&paths.golden_dir(), &image.key) {
+                Some(path) => {
+                    let size = file_size(&path);
+                    GoldenRow {
+                        image: image.key.clone(),
+                        backend: image.backend.to_string(),
+                        location: path.display().to_string(),
+                        present: size.is_some(),
+                        size_bytes: size,
+                    }
+                }
+                None => GoldenRow {
+                    image: image.key.clone(),
+                    backend: image.backend.to_string(),
+                    location: "not built yet".to_string(),
+                    present: false,
+                    size_bytes: None,
+                },
+            },
             // Lume keeps its VMs in its own store; vitro cannot see them without
             // asking, and `ls` does not shell out.
             Golden::VmName(name) => GoldenRow {

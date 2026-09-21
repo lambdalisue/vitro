@@ -80,6 +80,11 @@ impl fmt::Display for Guest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Golden {
     Image(PathBuf),
+    /// Whatever `build` or `promote` last made for this image, which is what
+    /// `golden` being unset means. Built images are dated so a rebuild cannot
+    /// pull the disk out from under a running VM, so a pinned path would have
+    /// to be edited after every build.
+    Latest,
     VmName(String),
 }
 
@@ -87,6 +92,7 @@ impl fmt::Display for Golden {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Golden::Image(path) => write!(f, "{}", path.display()),
+            Golden::Latest => write!(f, "the newest build"),
             Golden::VmName(name) => write!(f, "{name}"),
         }
     }
@@ -144,15 +150,18 @@ pub struct Image {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Build {
     pub kind: BuildKind,
-    pub source: Source,
+    /// Where the installation media comes from. Absent for an unattended
+    /// Windows install means "whatever is in vitro's media directory".
+    pub source: Option<Source>,
     pub sha256: Option<String>,
     pub disk_size: Option<ByteSize>,
     pub provision: Option<PathBuf>,
     /// Replaces the built-in answer file wholesale. Windows releases differ
     /// enough that a template which works everywhere is not worth chasing.
     pub unattend: Option<PathBuf>,
-    /// The virtio-win ISO the ARM64 drivers are lifted from.
-    pub virtio_iso: Option<PathBuf>,
+    /// Where the virtio drivers come from. A path or a URL; when it is not set
+    /// at all, `build` offers to fetch the upstream image.
+    pub virtio_iso: Option<Source>,
     /// Lume's own first-boot preset name, such as `tahoe`.
     pub unattended: Option<String>,
     pub build_timeout: Duration,
@@ -166,6 +175,7 @@ pub struct ToolPaths {
     pub qemu_img: Option<PathBuf>,
     pub ssh: Option<PathBuf>,
     pub scp: Option<PathBuf>,
+    pub ssh_keygen: Option<PathBuf>,
     pub lume: Option<PathBuf>,
 }
 
@@ -195,6 +205,7 @@ impl Config {
             qemu_img: file.tools.qemu_img.map(|p| expand(&p, home)),
             ssh: file.tools.ssh.map(|p| expand(&p, home)),
             scp: file.tools.scp.map(|p| expand(&p, home)),
+            ssh_keygen: file.tools.ssh_keygen.map(|p| expand(&p, home)),
             lume: file.tools.lume.map(|p| expand(&p, home)),
         };
         Ok(Self { images, tools })
@@ -266,6 +277,7 @@ struct ToolsSection {
     qemu_img: Option<String>,
     ssh: Option<String>,
     scp: Option<String>,
+    ssh_keygen: Option<String>,
     lume: Option<String>,
 }
 
@@ -305,7 +317,7 @@ struct ImageSection {
 #[serde(deny_unknown_fields)]
 struct BuildSection {
     kind: BuildKind,
-    source: String,
+    source: Option<String>,
     sha256: Option<String>,
     disk_size: Option<ByteSize>,
     provision: Option<String>,
@@ -350,21 +362,25 @@ fn resolve(
 ) -> Result<Image> {
     let backend = section.backend.unwrap_or(Backend::Qemu);
 
-    let golden_raw = section
-        .golden
-        .ok_or_else(|| anyhow!("`golden` is required"))?;
-    let golden = match backend {
-        Backend::Qemu => Golden::Image(expand(&golden_raw, home)),
+    let golden = match (backend, section.golden) {
+        (Backend::Qemu, Some(raw)) => Golden::Image(expand(&raw, home)),
+        // Unset is the ordinary case rather than an omission: `build` writes a
+        // dated file, so naming one here means renaming it here after every
+        // build.
+        (Backend::Qemu, None) => Golden::Latest,
         // Lume addresses its VMs by name, so a path here is almost certainly a
         // leftover from a QEMU entry rather than something that would work.
-        Backend::Lume => {
-            if golden_raw.contains('/') {
-                bail!(
-                    "`golden` must be a VM name for the lume backend, not a path ({golden_raw:?})"
-                );
+        (Backend::Lume, Some(raw)) => {
+            if raw.contains('/') {
+                bail!("`golden` must be a VM name for the lume backend, not a path ({raw:?})");
             }
-            Golden::VmName(golden_raw)
+            Golden::VmName(raw)
         }
+        // lume names its own VMs and vitro cannot list them without shelling
+        // out, so there is nothing here to work out from a directory.
+        (Backend::Lume, None) => bail!(
+            "`golden` is required for the lume backend: it is the name lume clones the VM from"
+        ),
     };
 
     let ssh_user = section
@@ -377,6 +393,16 @@ fn resolve(
         .map(|b| resolve_build(b, backend, home))
         .transpose()?;
     let guest = resolve_guest(section.guest, backend, build.as_ref())?;
+
+    // Leaving `golden` out means "the newest build", so with nothing to build
+    // it means nothing at all. Said here rather than left for `run` to discover,
+    // because the answer is to edit this file either way.
+    if matches!(golden, Golden::Latest) && build.is_none() {
+        bail!(
+            "image {key:?} has neither `golden` nor an [images.{key}.build] section, \
+             so there is nothing to run and nothing to build"
+        );
+    }
 
     Ok(Image {
         key: key.to_string(),
@@ -412,7 +438,10 @@ fn resolve(
 }
 
 fn resolve_build(section: BuildSection, backend: Backend, home: &Path) -> Result<Build> {
-    let source = classify_source(&section.source, home);
+    let source = section
+        .source
+        .as_deref()
+        .map(|raw| classify_source(raw, home));
 
     // A build kind belongs to exactly one backend. Catching the mismatch here
     // means the error arrives before anything is downloaded.
@@ -427,21 +456,19 @@ fn resolve_build(section: BuildSection, backend: Backend, home: &Path) -> Result
         );
     }
 
-    // vitro never downloads a Windows ISO: the licence is the user's to accept,
-    // and the distribution page hands out links that cannot be shared.
-    if section.kind == BuildKind::UnattendedInstall && !matches!(source, Source::LocalPath(_)) {
-        bail!(
-            "build kind {} needs `source` to be a local path to installation media \
-             you obtained yourself, not {:?}",
-            section.kind,
-            section.source
-        );
-    }
-    if section.kind != BuildKind::LumeIpsw && source == Source::Latest {
+    if section.kind != BuildKind::LumeIpsw && source == Some(Source::Latest) {
         bail!(
             "`source = \"latest\"` is only meaningful for build kind {}",
             BuildKind::LumeIpsw
         );
+    }
+
+    // Only a Windows install can be found without being told where: vitro keeps
+    // a directory for the media it is not allowed to download, and an ISO's
+    // volume label says which architecture it is for. Nothing else is
+    // identifiable enough to guess at.
+    if source.is_none() && section.kind != BuildKind::UnattendedInstall {
+        bail!("build kind {} needs a `source`", section.kind);
     }
 
     Ok(Build {
@@ -451,7 +478,10 @@ fn resolve_build(section: BuildSection, backend: Backend, home: &Path) -> Result
         disk_size: section.disk_size,
         provision: section.provision.map(|p| expand(&p, home)),
         unattend: section.unattend.map(|p| expand(&p, home)),
-        virtio_iso: section.virtio_iso.map(|p| expand(&p, home)),
+        virtio_iso: section
+            .virtio_iso
+            .as_deref()
+            .map(|raw| classify_source(raw, home)),
         unattended: section.unattended,
         build_timeout: section.build_timeout.unwrap_or(DEFAULT_BUILD_TIMEOUT),
     })
@@ -732,7 +762,7 @@ mod tests {
         assert_eq!(build.kind, BuildKind::CloudImage);
         assert_eq!(
             build.source,
-            Source::Url("https://cloud.example/noble-arm64.img".into())
+            Some(Source::Url("https://cloud.example/noble-arm64.img".into()))
         );
         assert_eq!(build.disk_size, Some(ByteSize::from_gib(64)));
         assert_eq!(
@@ -743,7 +773,37 @@ mod tests {
     }
 
     #[test]
-    fn an_unattended_install_refuses_to_download_its_media() {
+    fn an_unattended_install_may_be_pointed_at_a_url_it_was_given() {
+        // vitro will not go and find a Windows ISO — the licence is the user's
+        // to accept, and the download page issues links that expire. A URL
+        // somebody already has is a different thing: a mirror, an evaluation
+        // image, an artifact store. Refusing it only meant they had to
+        // download by hand what vitro downloads with a checksum and a cache.
+        let config = parse(
+            r#"
+                [images.windows]
+                golden = "/srv/windows.qcow2"
+                ssh_user = "dev"
+
+                [images.windows.build]
+                kind = "unattended-install"
+                source = "https://mirror.example/windows.iso"
+                "#,
+        )
+        .unwrap();
+
+        let (_, build) = config.buildable_image("windows").unwrap();
+        assert_eq!(
+            build.source,
+            Some(Source::Url("https://mirror.example/windows.iso".into()))
+        );
+    }
+
+    #[test]
+    fn an_unattended_install_cannot_ask_for_the_latest_anything() {
+        // Only lume knows what "latest" means; for everyone else it is a path
+        // named `latest` or a mistake, and guessing between those is worse
+        // than refusing.
         let err = format!(
             "{:#}",
             parse(
@@ -754,13 +814,13 @@ mod tests {
 
                 [images.windows.build]
                 kind = "unattended-install"
-                source = "https://example.com/windows.iso"
+                source = "latest"
                 "#,
             )
             .unwrap_err()
         );
 
-        assert!(err.contains("local path"), "{err}");
+        assert!(err.contains("latest"), "{err}");
     }
 
     #[test]
@@ -892,7 +952,7 @@ mod tests {
         );
 
         let (_, build) = config.buildable_image("macos").unwrap();
-        assert_eq!(build.source, Source::Latest);
+        assert_eq!(build.source, Some(Source::Latest));
         assert_eq!(build.unattended.as_deref(), Some("tahoe"));
     }
 
@@ -914,7 +974,9 @@ mod tests {
         let (_, build) = config.buildable_image("macos").unwrap();
         assert_eq!(
             build.source,
-            Source::LocalPath(PathBuf::from("/home/dev/Downloads/restore.ipsw"))
+            Some(Source::LocalPath(PathBuf::from(
+                "/home/dev/Downloads/restore.ipsw"
+            )))
         );
     }
 }

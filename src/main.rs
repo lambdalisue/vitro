@@ -5,8 +5,8 @@ use anyhow::{bail, Result};
 use clap::Parser;
 
 use vitro::cli::{Cli, Command};
-use vitro::commands::{ls, status};
-use vitro::{Config, Paths, Store, SysinfoProbe};
+use vitro::commands::{build, destroy, exec, ls, run, status};
+use vitro::{golden, Config, Golden, Paths, Store, SysinfoProbe};
 
 /// Exit codes, as promised to callers: 0 success, 1 failure, 2 bad command
 /// line. clap already uses 2 for its own parse errors.
@@ -40,7 +40,10 @@ fn init_tracing() {
         Ok(filter) => filter,
         Err(_) => return,
     };
-    let _ = fmt().with_env_filter(filter).with_writer(std::io::stderr).try_init();
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 fn dispatch(cli: Cli) -> Result<i32> {
@@ -51,11 +54,14 @@ fn dispatch(cli: Cli) -> Result<i32> {
         None => show_status(&paths, &config, None, false),
 
         Some(Command::Ls { json, prune }) => {
-            if prune {
-                bail!("`--prune` needs the VM lifecycle, which is not built yet");
-            }
             let store = Store::new(paths.state_dir());
-            let listing = ls::collect(&store, &config, &SysinfoProbe::new(), ls::now())?;
+            if prune {
+                // stderr, so `ls --json --prune` still emits only JSON.
+                for name in run::reap_dead(&store, &SysinfoProbe::new())? {
+                    eprintln!("pruned {name}");
+                }
+            }
+            let listing = ls::collect(&paths, &store, &config, &SysinfoProbe::new(), ls::now())?;
 
             let mut stdout = std::io::stdout().lock();
             if json {
@@ -74,6 +80,69 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
+        Some(Command::Build { image, keep_failed }) => {
+            let image_key = image.clone();
+            let built = build::build(&paths, &config, &build::Options { image, keep_failed })?;
+            println!(
+                "built {} in {}",
+                built.golden.display(),
+                humantime_took(built.took)
+            );
+            if let Some(password) = built.password {
+                // Nothing else records it, and a guest that stops answering on
+                // its key has no other way in.
+                println!("the guest account's password is {password}");
+            }
+            if let Some(hint) = repoint_hint(&paths, &config, &image_key, &built.golden) {
+                println!("{hint}");
+            }
+            Ok(0)
+        }
+
+        Some(Command::Run { image, name }) => {
+            let record = run::run(&paths, &config, run::Options { image, name })?;
+            println!(
+                "{} is up: ssh {}@{} -p {}",
+                record.name, record.ssh_user, record.ssh_host, record.ssh_port
+            );
+            Ok(0)
+        }
+
+        Some(Command::Exec { name, command }) => exec::exec(&paths, &config, &name, &command),
+
+        Some(Command::Ssh { name }) => exec::interactive(&paths, &config, &name),
+
+        Some(Command::Destroy {
+            name,
+            all,
+            graceful,
+        }) => {
+            let options = destroy::Options { graceful };
+            let outcomes = match (name, all) {
+                (Some(name), _) => vec![destroy::destroy_one(&paths, &config, &name, &options)?],
+                (None, true) => destroy::destroy_all(&paths, &config, &options)?,
+                (None, false) => bail!("name a VM to destroy, or pass --all"),
+            };
+            if outcomes.is_empty() {
+                println!("no VMs to destroy");
+            }
+            let mut failed = false;
+            for outcome in outcomes {
+                match outcome {
+                    destroy::Outcome::Stopped(name) => println!("stopped {name}"),
+                    destroy::Outcome::CleanedUp(name) => println!("cleaned up {name}"),
+                    destroy::Outcome::Failed { name, reason } => {
+                        failed = true;
+                        eprintln!("vitro: could not destroy {name}: {reason}");
+                    }
+                }
+            }
+            if failed {
+                bail!("some VMs could not be destroyed");
+            }
+            Ok(0)
+        }
+
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
         // The command line describes the whole tool on purpose, so the parts
@@ -85,7 +154,6 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
 fn show_status(paths: &Paths, config: &Config, name: Option<&str>, json: bool) -> Result<i32> {
     let status = status::collect(paths, config, &SysinfoProbe::new(), name)?;
-
     let mut stdout = std::io::stdout().lock();
     if json {
         serde_json::to_writer_pretty(&mut stdout, &status)?;
@@ -104,4 +172,39 @@ fn load_config(paths: &Paths) -> Result<Config> {
         return Ok(Config::default());
     }
     Config::load(&path, paths.home(), &paths.ssh_key())
+}
+
+/// What to say after an image has landed somewhere the next `run` will not
+/// look by itself.
+///
+/// Nothing at all in the ordinary case: with `golden` unset, a dated image is
+/// picked up on its own, and telling somebody to go and edit a file they do not
+/// need to edit is how a tool ends up needing expertise to use. A pinned
+/// `golden`, or a `promote --as` name that no `run` would choose, still has to
+/// be said.
+fn repoint_hint(
+    paths: &Paths,
+    config: &Config,
+    image_key: &str,
+    produced: &std::path::Path,
+) -> Option<String> {
+    let image = config.image(image_key).ok()?;
+    let picked_up = matches!(image.golden, Golden::Latest)
+        && golden::newest(&paths.golden_dir(), image_key).as_deref() == Some(produced);
+    (!picked_up).then(|| {
+        format!(
+            "point `golden` at it in {} to use it by default",
+            paths.config_file().display()
+        )
+    })
+}
+
+/// Minutes and seconds; a build long enough to matter is never sub-second.
+fn humantime_took(took: std::time::Duration) -> String {
+    let secs = took.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
 }
