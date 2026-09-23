@@ -51,7 +51,7 @@ Two things to install — vitro itself, and QEMU, which brings the guest firmwar
 with it:
 
 ```console
-$ cargo install --git https://github.com/lambdalisue/vitro
+$ cargo install vitro
 $ brew install qemu                        # macOS
 $ sudo apt install qemu-system qemu-utils  # Debian, Ubuntu
 ```

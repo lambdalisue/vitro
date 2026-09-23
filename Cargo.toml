@@ -5,12 +5,23 @@ edition = "2021"
 rust-version = "1.85"
 description = "Disposable development VMs driven from a CLI"
 license = "MIT"
-publish = false
+repository = "https://github.com/lambdalisue/vitro"
+readme = "README.md"
+keywords = ["vm", "qemu", "windows", "sandbox", "cli"]
+categories = ["command-line-utilities", "development-tools", "virtualization"]
+# Anchored with a leading slash, every one of them: an unanchored `README.md`
+# matches at any depth, and in a checkout with a `.direnv` in it that pulls a
+# hundred unrelated files out of nixpkgs and into the published tarball.
+include = [
+    "/src/**/*.rs",
+    "/tests/**/*.rs",
+    "/docs/*.md",
+    "/README.md",
+    "/LICENSE",
+    "/Cargo.toml",
+]
 
 [workspace]
-# The spikes are throwaway crates that settle one design question each. They
-# carry their own lockfiles and must not be dragged into this build.
-exclude = ["spikes/seedfat", "spikes/portprobe", "spikes/hostfacts"]
 
 [dependencies]
 anyhow = "1"
