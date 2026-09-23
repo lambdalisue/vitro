@@ -45,11 +45,28 @@ jobs:
       # commit a tag happens to point at, and publishing cannot be undone.
       - run: cargo test
 
+  # The upload step below attaches binaries to a release; it does not create
+  # one, and when none is there it waits for it — six runners spending two
+  # minutes each discovering that nobody is coming.
+  create-release:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Skipped on a manual run, where there is no tag and nothing to release.
+      # The job itself still succeeds, so the matrix below can depend on it
+      # under either trigger rather than needing to know which one it is.
+      - if: startsWith(github.ref, 'refs/tags/')
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   # Native runners for every target: vitro runs same-architecture guests and
   # nothing else, so an aarch64 build that was never run on aarch64 is exactly
   # the kind of claim this project does not make.
   binaries:
-    needs: guard
+    needs: create-release
     permissions:
       contents: write
     strategy:
