@@ -246,6 +246,20 @@ CI runs those checks on Linux, macOS and Windows. Linux matters most: it is the
 host this is least often developed on, and the one where a portability mistake
 would otherwise go unnoticed until somebody tried it.
 
+Releasing is a tag and nothing else:
+
+```console
+$ just release-check          # what CI will refuse, found locally
+$ git tag v0.2.0 && git push --tags
+```
+
+The tag has to match the version in `Cargo.toml` or the workflow stops before
+it builds anything. From there it builds a binary on a native runner for each
+of the six supported targets, attaches them to a GitHub release with their
+checksums, and publishes to crates.io last — because that is the one step that
+cannot be undone. It authenticates with crates.io through trusted publishing,
+so there is no registry token in the repository's secrets.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

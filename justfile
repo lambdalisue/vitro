@@ -20,9 +20,7 @@ fmt-check:
 lint:
     cargo clippy --all-targets --all-features -- -D warnings
 
-# The spikes are separate crates on purpose; build them only when a design
-# question is being revisited.
-spikes:
-    cargo build --release --manifest-path spikes/seedfat/Cargo.toml
-    cargo build --release --manifest-path spikes/portprobe/Cargo.toml
-    cargo build --release --manifest-path spikes/hostfacts/Cargo.toml
+# What CI will do with a tag, minus the uploading. Worth running before tagging:
+# the release workflow's own dry run costs six runners and several minutes.
+release-check:
+    cargo publish --dry-run --locked

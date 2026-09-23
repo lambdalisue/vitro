@@ -1,0 +1,118 @@
+name: release
+
+# A pushed tag is the whole trigger, so nothing is ever released from a tree
+# nobody named.
+on:
+  push:
+    tags: ["v*"]
+  # Builds every target and uploads nothing. A runner image or a target can
+  # break between releases, and finding that out while cutting one is the
+  # worst moment to find it out.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Releases queue rather than cancel one another. A cancelled run can leave a
+# release with some of its binaries attached, which looks finished and is not.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The tag is what people quote; `Cargo.toml` is what crates.io records, and
+  # records permanently — a published version can be yanked but never replaced.
+  # So the two disagreeing stops the run before anything is built, let alone
+  # uploaded.
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: The tag and the crate version have to agree
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          crate=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$crate" != "$tag" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} means $tag, Cargo.toml says $crate"
+            exit 1
+          fi
+          echo "releasing $crate"
+
+      # Not a formality. `check` having passed on `main` says nothing about the
+      # commit a tag happens to point at, and publishing cannot be undone.
+      - run: cargo test
+
+  # Native runners for every target: vitro runs same-architecture guests and
+  # nothing else, so an aarch64 build that was never run on aarch64 is exactly
+  # the kind of claim this project does not make.
+  binaries:
+    needs: guard
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-15
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          # `ring`, which arrives under ureq's TLS, needs clang here. The image
+          # ships LLVM, so this needs no install step — but it is why this
+          # target cannot simply be cross-compiled from the x86-64 runner.
+          - target: aarch64-pc-windows-msvc
+            os: windows-11-arm
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: vitro
+          target: ${{ matrix.target }}
+          # The triple is in the name because the archives all land in one
+          # release and a bare `vitro.tar.gz` would not say which machine it is
+          # for.
+          archive: $bin-$tag-$target
+          # `--locked`: the binary people download is built from the versions
+          # the tests ran against, not from whatever resolved that morning.
+          locked: true
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
+          dry-run: ${{ github.event_name == 'workflow_dispatch' }}
+
+  # Last, and only on a tag. Everything above can be deleted and done again;
+  # this is the one step that cannot, so it does not run until every target has
+  # proved it builds.
+  crates-io:
+    needs: binaries
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      # Trusted publishing: crates.io trades this workflow's OIDC identity for
+      # a token that lives minutes, so there is no registry token in the
+      # repository's secrets for anyone to leak or rotate.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
