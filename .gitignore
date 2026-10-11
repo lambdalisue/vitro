@@ -1,5 +1,8 @@
-target/
+/target
+/.envrc
 .direnv/
+result
+/.claude/worktrees/
 
 # Experiment scratch: disk images and downloaded media never belong in git.
 spikes/work/
