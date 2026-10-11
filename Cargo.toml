@@ -1,6 +1,8 @@
 [package]
 name = "vitro"
-version = "0.1.1"
+# A placeholder: the tag is the only record of the version, and the release
+# workflow stamps it here before building and publishing.
+version = "0.0.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Disposable development VMs driven from a CLI"
