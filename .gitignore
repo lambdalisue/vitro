@@ -6,6 +6,7 @@ result
 
 # Experiment scratch: disk images and downloaded media never belong in git.
 spikes/work/
+spikes/*/target/
 .playwright-mcp/
 
 # Driver binaries lifted from the virtio-win ISO for the Windows spike. They
