@@ -148,6 +148,36 @@ fn a_screenshot_of_a_vm_without_a_monitor_says_why_rather_than_writing_nothing()
 }
 
 #[test]
+fn a_misspelt_key_is_refused_before_any_vm_is_touched() {
+    Sandbox::new()
+        .run(&["key", "linux-7f3a2c", "ret", "shfit-a"])
+        .failure()
+        .stderr_contains("shfit");
+}
+
+#[test]
+fn keys_for_a_vm_without_a_monitor_say_why_rather_than_pressing_nothing() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+
+    sandbox
+        .run(&["key", "linux-7f3a2c", "ret"])
+        .failure()
+        .stderr_contains("monitor socket");
+}
+
+#[test]
+fn a_click_on_a_vm_without_a_monitor_says_why_rather_than_clicking_nothing() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+
+    sandbox
+        .run(&["click", "linux-7f3a2c", "10", "20"])
+        .failure()
+        .stderr_contains("monitor socket");
+}
+
+#[test]
 fn no_arguments_reports_status_and_what_to_do_next() {
     Sandbox::new()
         .run(&[])
@@ -455,6 +485,8 @@ fn help_describes_the_whole_tool_not_just_the_finished_parts() {
         "exec",
         "promote",
         "screenshot",
+        "key",
+        "click",
         "launch",
         "doctor",
     ] {

@@ -135,6 +135,24 @@ pub enum Command {
         out: Option<PathBuf>,
     },
 
+    /// Press keys on the guest's keyboard, chord by chord
+    ///
+    /// Each chord is QEMU key names joined by `-`: `shift-a`, `ctrl-alt-delete`,
+    /// `ret`. A key on its own is pressed and released, so `shift_r` taps it.
+    Key {
+        name: String,
+        #[arg(required = true, value_name = "CHORD")]
+        chords: Vec<String>,
+        /// Milliseconds between chords
+        #[arg(long, default_value_t = 80)]
+        delay: u64,
+    },
+
+    /// Click the left mouse button on the guest's screen
+    ///
+    /// `x` and `y` are pixels of the screen as `vitro screenshot` saves it.
+    Click { name: String, x: u32, y: u32 },
+
     /// Start a program on the guest's desktop
     Launch {
         name: String,
@@ -176,6 +194,24 @@ mod tests {
         assert!(Cli::try_parse_from(["vitro", "destroy", "vm1"]).is_ok());
         assert!(Cli::try_parse_from(["vitro", "destroy", "--all"]).is_ok());
         assert!(Cli::try_parse_from(["vitro", "destroy", "vm1", "--all"]).is_err());
+    }
+
+    #[test]
+    fn key_takes_its_chords_in_order() {
+        let cli =
+            Cli::try_parse_from(["vitro", "key", "vm1", "shift_r", "shift-k", "ret"]).unwrap();
+
+        let Some(Command::Key {
+            name,
+            chords,
+            delay,
+        }) = cli.command
+        else {
+            panic!("expected key");
+        };
+        assert_eq!(name, "vm1");
+        assert_eq!(chords, ["shift_r", "shift-k", "ret"]);
+        assert_eq!(delay, 80);
     }
 
     #[test]

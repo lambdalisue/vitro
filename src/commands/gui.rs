@@ -1,24 +1,32 @@
-//! `vitro screenshot` and `vitro launch` — checking that a window actually opens.
+//! `vitro screenshot`, `vitro key`, `vitro click` and `vitro launch` —
+//! checking that a window actually opens, and using it.
 //!
 //! Between them these answer the one question a headless VM cannot otherwise
-//! be asked: did the program come up, and what does it look like? The picture
-//! comes from the monitor rather than from inside the guest, so it works even
-//! when the guest is wedged at a firmware prompt with no network.
+//! be asked: did the program come up, and what does it look like? The
+//! picture, the keys and the clicks go through the VM's monitor rather than
+//! through the guest — a QEMU guest's QMP socket, a lume guest's VNC server —
+//! so the picture works even when the guest is wedged at a firmware prompt
+//! with no network, and the keys and clicks arrive as a keyboard's and a
+//! mouse's would.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::{commands::exec, golden, qmp, ssh, Config, Guest, Paths, Store};
+use crate::keys::Chord;
+use crate::{
+    commands::exec, golden, lume, process, qmp, signals, ssh, tools, vnc, Backend, Config, Guest,
+    Paths, Store, SysinfoProbe, VmRecord,
+};
 
-pub fn screenshot(paths: &Paths, name: &str, out: Option<&Path>) -> Result<PathBuf> {
-    let store = Store::new(paths.state_dir());
-    let name = store.resolve(name)?;
-    let record = store.load(&name)?;
-
-    let Some(socket) = record.qmp_socket.as_deref() else {
-        bail!("VM {name:?} was started without a monitor socket, so its screen cannot be captured");
-    };
+pub fn screenshot(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    out: Option<&Path>,
+) -> Result<PathBuf> {
+    let record = running(paths, name)?;
 
     // Into the VM's own directory by default: a picture of a guest belongs with
     // the rest of that guest's debris, and is removed with it.
@@ -33,11 +41,17 @@ pub fn screenshot(paths: &Paths, name: &str, out: Option<&Path>) -> Result<PathB
         std::fs::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
-
-    // QEMU writes the file itself, so the path has to be one it can reach —
-    // which is any absolute path on this host.
     let absolute = std::path::absolute(&out).unwrap_or(out);
-    qmp::screendump(socket, &absolute)?;
+
+    match record.backend {
+        // QEMU writes the file itself, so the path has to be one it can reach —
+        // which is any absolute path on this host.
+        Backend::Qemu => qmp::screendump(monitor(&record)?, &absolute)?,
+        Backend::Lume => {
+            let screen = vnc::Session::connect(&vnc_target(config, &record)?)?.capture()?;
+            write_png(&absolute, &screen)?;
+        }
+    }
 
     // A guest that has switched its display off still has a framebuffer, so
     // the capture succeeds and yields a rectangle of one colour. That looks
@@ -52,6 +66,161 @@ pub fn screenshot(paths: &Paths, name: &str, out: Option<&Path>) -> Result<PathB
     }
 
     Ok(absolute)
+}
+
+/// Press chords on the guest's keyboard, one after another, `delay` apart.
+///
+/// Every chord is read before the first is pressed, so a misspelt name never
+/// leaves the guest with half of what was meant.
+pub fn key(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    chords: &[String],
+    delay: Duration,
+) -> Result<()> {
+    let chords = chords
+        .iter()
+        .map(|chord| Chord::parse(chord))
+        .collect::<Result<Vec<_>>>()?;
+    let record = running(paths, name)?;
+
+    match record.backend {
+        Backend::Qemu => {
+            let socket = monitor(&record)?;
+            for (i, chord) in chords.iter().enumerate() {
+                pace(i, delay)?;
+                qmp::send_key(socket, chord.names())?;
+            }
+        }
+        Backend::Lume => {
+            let mut session = vnc::Session::connect(&vnc_target(config, &record)?)?;
+            for (i, chord) in chords.iter().enumerate() {
+                pace(i, delay)?;
+                session.press(&chord.keysyms())?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Wait `delay` before every chord but the first, and stop at a Ctrl-C rather
+/// than type the rest of what was asked into a guest nobody wants it in.
+///
+/// The wait is taken in slices, because a signal only sets a flag: one long
+/// sleep would make a Ctrl-C wait out whatever `--delay` was given.
+fn pace(index: usize, delay: Duration) -> Result<()> {
+    const SLICE: Duration = Duration::from_millis(50);
+
+    if index > 0 {
+        let until = std::time::Instant::now() + delay;
+        loop {
+            signals::check()?;
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            std::thread::sleep(left.min(SLICE));
+        }
+    }
+    signals::check()
+}
+
+/// Click the left button at `(x, y)`, in the pixels of the guest's screen as
+/// `vitro screenshot` shows it.
+pub fn click(paths: &Paths, config: &Config, name: &str, x: u32, y: u32) -> Result<()> {
+    let record = running(paths, name)?;
+    match record.backend {
+        Backend::Qemu => {
+            let socket = monitor(&record)?;
+            // The tablet spans the screen, so the screen's size is needed to
+            // place a pixel on it; a capture is the one place that says.
+            let dir = tempfile::tempdir()?;
+            let shot = dir.path().join("size.png");
+            qmp::screendump(socket, &shot)?;
+            let (width, height) = png_size(&shot)?;
+            check_inside(x, y, width, height)?;
+            qmp::click(socket, to_tablet(x, width), to_tablet(y, height))
+        }
+        Backend::Lume => {
+            let mut session = vnc::Session::connect(&vnc_target(config, &record)?)?;
+            let (width, height) = session.size();
+            check_inside(x, y, u32::from(width), u32::from(height))?;
+            session.click(x as u16, y as u16)
+        }
+    }
+}
+
+fn check_inside(x: u32, y: u32, width: u32, height: u32) -> Result<()> {
+    if x >= width || y >= height {
+        bail!("({x}, {y}) is off the screen, which is {width}x{height}");
+    }
+    Ok(())
+}
+
+/// A pixel's place on the tablet's axis, which spans `0..=ABS_MAX` end to end.
+fn to_tablet(pixel: u32, size: u32) -> u32 {
+    if size <= 1 {
+        return 0;
+    }
+    (u64::from(pixel) * u64::from(qmp::ABS_MAX) / u64::from(size - 1)) as u32
+}
+
+fn png_size(path: &Path) -> Result<(u32, u32)> {
+    let file =
+        std::fs::File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let reader = png::Decoder::new(std::io::BufReader::new(file)).read_info()?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
+
+fn running(paths: &Paths, name: &str) -> Result<VmRecord> {
+    let store = Store::new(paths.state_dir());
+    let name = store.resolve(name)?;
+    let record = store.load(&name)?;
+    if !process::is_running(&SysinfoProbe::new(), record.pid, record.pid_start_time) {
+        bail!("VM {name:?} is not running; `vitro run` starts a new one");
+    }
+    Ok(record)
+}
+
+fn monitor(record: &VmRecord) -> Result<&Path> {
+    match record.qmp_socket.as_deref() {
+        Some(socket) => Ok(socket),
+        None => bail!(
+            "VM {:?} was started without a monitor socket, so its screen and keyboard cannot be reached",
+            record.name
+        ),
+    }
+}
+
+/// Where a lume guest's VNC server is now. Asked of lume each time, because
+/// the port and the password change whenever the guest starts.
+fn vnc_target(config: &Config, record: &VmRecord) -> Result<vnc::Target> {
+    let binary = tools::resolve("lume", config.tools().lume.as_deref(), "tools.lume")?.path;
+    let info = lume::get(&binary, &record.name)?;
+    match info.vnc_url {
+        Some(url) => vnc::parse_url(&url),
+        None => bail!("lume reports no VNC server for {:?}", record.name),
+    }
+}
+
+fn write_png(path: &Path, screen: &vnc::Screen) -> Result<()> {
+    use std::io::Write;
+
+    let file =
+        std::fs::File::create(path).with_context(|| format!("cannot create {}", path.display()))?;
+    let mut out = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(&mut out, screen.width, screen.height);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&screen.rgb)?;
+    // Both the encoder and the buffer write their last bytes on drop and
+    // discard any error there, which would report a truncated file as saved.
+    writer.finish()?;
+    out.flush()
+        .with_context(|| format!("cannot write {}", path.display()))
 }
 
 /// Whether a PNG is entirely one colour.
@@ -167,6 +336,19 @@ fn shell_join(command: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tablet_spans_the_screen_from_edge_to_edge() {
+        assert_eq!(to_tablet(0, 1920), 0);
+        assert_eq!(to_tablet(1919, 1920), qmp::ABS_MAX);
+        assert_eq!(to_tablet(960, 1921), qmp::ABS_MAX / 2);
+    }
+
+    #[test]
+    fn a_click_off_the_screen_is_refused() {
+        assert!(check_inside(1920, 0, 1920, 1080).is_err());
+        assert!(check_inside(1919, 1079, 1920, 1080).is_ok());
+    }
 
     #[test]
     fn a_linux_program_is_given_a_display_and_left_running() {
