@@ -1,26 +1,36 @@
-default: check
+# Run `nix develop` (or use direnv) first so every tool is on PATH.
 
-# Everything CI runs, in the order that fails fastest.
-check: fmt-check lint test
+set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# List the recipes.
+default:
+    @just --list
+
+# Build the binary.
 build:
     cargo build
 
-test:
-    cargo test
-
+# Format every source.
 fmt:
-    cargo fmt
-    nixpkgs-fmt flake.nix
+    cargo fmt --all
+    nix fmt flake.nix
 
+# Check formatting without changing files.
 fmt-check:
-    cargo fmt --check
-    nixpkgs-fmt --check flake.nix
+    cargo fmt --all --check
 
+# Lint with every warning as an error.
 lint:
     cargo clippy --all-targets --all-features -- -D warnings
 
-# What CI will do with a tag, minus the uploading. Worth running before tagging:
-# the release workflow's own dry run costs six runners and several minutes.
+# Run the tests.
+test:
+    cargo test
+
+# Everything CI runs.
+ci: fmt-check lint test
+
+# What the release workflow will publish, minus the publishing. Worth running
+# before publishing a release: crates.io never lets a version be replaced.
 release-check:
     cargo publish --dry-run --locked

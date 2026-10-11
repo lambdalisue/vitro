@@ -239,7 +239,7 @@ is written and reachable and has never been run. See
 
 ```console
 $ nix develop
-$ just check      # fmt, clippy, tests — what CI runs
+$ just ci         # fmt, clippy, tests — what CI runs
 ```
 
 CI runs those checks on Linux, macOS and Windows. Linux matters most: it is the
