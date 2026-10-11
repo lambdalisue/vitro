@@ -29,6 +29,8 @@ pub struct VmInfo {
     pub status: String,
     pub ip_address: Option<String>,
     pub ssh_available: bool,
+    /// Where the guest's screen and keyboard are served, while it runs.
+    pub vnc_url: Option<String>,
 }
 
 impl VmInfo {
@@ -266,6 +268,7 @@ pub fn parse_info(name: &str, json: &str) -> Result<VmInfo> {
             .get("sshAvailable")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        vnc_url: string("vncUrl"),
     })
 }
 
@@ -405,6 +408,18 @@ mod tests {
         assert_eq!(info.status, "running");
         assert_eq!(info.ip_address.as_deref(), Some("192.168.64.7"));
         assert!(info.ssh_available);
+        assert_eq!(info.vnc_url, None);
+    }
+
+    #[test]
+    fn a_running_guest_reports_where_its_screen_is_served() {
+        let info = parse_info(
+            "macos",
+            r#"{"name":"macos","status":"running","vncUrl":"vnc://:pass.0.0.1:56123"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(info.vnc_url.as_deref(), Some("vnc://:pass.0.0.1:56123"));
     }
 
     #[test]

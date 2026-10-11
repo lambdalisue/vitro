@@ -14,6 +14,7 @@ pub mod commands;
 pub mod golden;
 pub mod image;
 pub mod iso;
+pub mod keys;
 pub mod lume;
 pub mod media;
 pub mod process;
@@ -24,6 +25,7 @@ pub mod signals;
 pub mod ssh;
 pub mod tools;
 pub mod unattend;
+pub mod vnc;
 
 pub use config::*;
 pub use paths::*;
