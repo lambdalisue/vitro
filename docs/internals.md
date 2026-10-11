@@ -56,6 +56,17 @@ monitor, and QMP spells it `input-send-event` with an explicit press and
 release per key — and a press and release batched into one event arrives as a
 single HID report, which a guest UI ignores.
 
+`click` places the pointer on QEMU's tablet, whose axes span the screen end to
+end rather than counting pixels, so a click first takes a capture to learn the
+screen's size.
+
+A lume guest has no QEMU monitor. Its screen and keyboard are reached through
+the VNC server Virtualization.framework offers, at an address and password
+lume reports afresh each time the guest starts. Keys sent that way arrive as a
+keyboard's would, so macOS asks for no Accessibility permission — which input
+synthesised from inside the guest would need, and which only a click in System
+Settings can grant.
+
 ## Seed volumes
 
 Both cloud-init and Windows Setup read their configuration off a small volume

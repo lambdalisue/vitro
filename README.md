@@ -185,6 +185,8 @@ toolchain is spent once.
 | `port <vm>`              | Print the SSH port and nothing else                  |
 | `inspect <vm>`           | Print the VM's record as JSON                        |
 | `screenshot <vm>`        | Save a picture of the guest's screen                 |
+| `key <vm> <chord>…`      | Press keys on the guest's keyboard (`shift-a`)       |
+| `click <vm> <x> <y>`     | Click at a pixel of the guest's screen               |
 | `launch <vm> <cmd>…`     | Start a program on the guest's desktop               |
 
 A VM can be named by any unambiguous prefix. An ambiguous one lists the

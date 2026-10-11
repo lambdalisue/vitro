@@ -189,8 +189,28 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Doctor) => doctor::report(&paths, &config),
 
         Some(Command::Screenshot { name, out }) => {
-            let path = gui::screenshot(&paths, &name, out.as_deref())?;
+            let path = gui::screenshot(&paths, &config, &name, out.as_deref())?;
             println!("{}", path.display());
+            Ok(0)
+        }
+
+        Some(Command::Key {
+            name,
+            chords,
+            delay,
+        }) => {
+            gui::key(
+                &paths,
+                &config,
+                &name,
+                &chords,
+                std::time::Duration::from_millis(delay),
+            )?;
+            Ok(0)
+        }
+
+        Some(Command::Click { name, x, y }) => {
+            gui::click(&paths, &config, &name, x, y)?;
             Ok(0)
         }
 
