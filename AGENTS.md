@@ -87,6 +87,7 @@ Commits before this convention was adopted use Conventional Commits
 | `spec` | `docs/spec/` |
 | `ci` | `.github/` |
 | `nix` | `flake.nix`, `flake.lock` |
+| `repo` | `.gitignore`, `.gitattributes`, `.envrc.sample` |
 | `deps` | dependency updates |
 
 Add a row when a new area appears.
