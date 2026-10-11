@@ -1,4 +1,5 @@
-//! A minimal QMP client: enough to stop a guest and to look at its screen.
+//! A minimal QMP client: enough to stop a guest, look at its screen and press
+//! its keys.
 //!
 //! Two things about QMP are easy to get wrong and expensive to debug. There is
 //! no `sendkey` command — that name belongs to the human monitor, and QMP
@@ -132,24 +133,64 @@ pub fn screendump(socket: &Path, out: &Path) -> Result<()> {
     )
 }
 
-/// Press and release one key, with optional modifiers held around it.
+/// How long keys stay down between the press and the release.
+#[cfg(unix)]
+const KEY_HOLD: Duration = Duration::from_millis(20);
+
+/// Press keys together and let go in reverse, as fingers would: modifiers are
+/// released after the key they modify.
+///
+/// The presses and the releases go as two calls. Batched into one, they arrive
+/// as a single HID report, which reads to a guest as no press at all.
 pub fn send_key(socket: &Path, keys: &[&str]) -> Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let mut events = Vec::new();
-    for key in keys {
-        events.push(key_event(key, true));
-    }
-    // Modifiers are released after the key they modify.
-    for key in keys.iter().rev() {
-        events.push(key_event(key, false));
-    }
+    let presses: Vec<_> = keys.iter().map(|key| key_event(key, true)).collect();
     execute(
         socket,
         "input-send-event",
-        Some(serde_json::json!({ "events": events })),
+        Some(serde_json::json!({ "events": presses })),
+    )?;
+    #[cfg(unix)]
+    std::thread::sleep(KEY_HOLD);
+    let releases: Vec<_> = keys.iter().rev().map(|key| key_event(key, false)).collect();
+    execute(
+        socket,
+        "input-send-event",
+        Some(serde_json::json!({ "events": releases })),
     )
+}
+
+/// The largest coordinate on either axis of QEMU's absolute pointer, the
+/// tablet: it spans the screen whatever the screen's size.
+pub const ABS_MAX: u32 = 0x7fff;
+
+/// Click the left button at `(x, y)`, in the tablet's coordinates.
+///
+/// Three calls — move, press, release — because a press and release batched
+/// with the move arrive as one HID report, which a guest UI ignores.
+pub fn click(socket: &Path, x: u32, y: u32) -> Result<()> {
+    let moved = serde_json::json!([
+        { "type": "abs", "data": { "axis": "x", "value": x } },
+        { "type": "abs", "data": { "axis": "y", "value": y } },
+    ]);
+    execute(
+        socket,
+        "input-send-event",
+        Some(serde_json::json!({ "events": moved })),
+    )?;
+    for down in [true, false] {
+        let button = serde_json::json!([
+            { "type": "btn", "data": { "down": down, "button": "left" } },
+        ]);
+        execute(
+            socket,
+            "input-send-event",
+            Some(serde_json::json!({ "events": button })),
+        )?;
+    }
+    Ok(())
 }
 
 fn key_event(key: &str, down: bool) -> serde_json::Value {
