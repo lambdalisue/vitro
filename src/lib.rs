@@ -15,6 +15,7 @@ pub mod commands;
 pub mod golden;
 pub mod image;
 pub mod iso;
+pub mod jobs;
 pub mod keys;
 pub mod lume;
 pub mod media;

@@ -6,6 +6,7 @@ pub mod exec;
 pub mod forward;
 pub mod gui;
 pub mod inspect;
+pub mod jobs;
 pub mod keygen;
 pub mod ls;
 pub mod promote;

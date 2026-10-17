@@ -113,8 +113,17 @@ command naming `git`.
 - Setup that took more than a few minutes is worth keeping: `vitro promote
   <vm> --as <name>` turns the VM into a golden image, and `vitro run --golden
   <name> <image>` starts from it later. Ask the user before promoting.
-- Builds that take minutes: run the `vitro exec` in a background task and wait
-  for it, rather than polling the guest with `sleep`.
+- Builds that take more than a few minutes: start them as a job, so a dropped
+  connection or an interrupted session loses nothing.
+
+  ```console
+  $ job=$(vitro exec --detach --sync . windows cargo build --release)
+  $ vitro attach "$job"     # output from the start; exits with the build's code
+  $ vitro jobs windows      # what is running, what ended with which code
+  ```
+
+  Run `vitro attach` in a background task if you need to do something else
+  meanwhile. Do not hand-roll `nohup` or `Start-Process` with a log file.
 
 ## Things to avoid
 

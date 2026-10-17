@@ -241,7 +241,7 @@ fn shell_join(command: &[String], quoting: Quoting) -> String {
     }
 }
 
-fn compose(command: &[String], quoting: Quoting, prelude: &Prelude) -> String {
+pub(crate) fn compose(command: &[String], quoting: Quoting, prelude: &Prelude) -> String {
     let command = shell_join(command, quoting);
     match quoting {
         Quoting::Posix => {
@@ -284,7 +284,7 @@ pub(crate) fn powershell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-fn quote(part: &str) -> String {
+pub(crate) fn quote(part: &str) -> String {
     const SAFE: &[u8] = b"-_./:=@,+";
     let bare = !part.is_empty()
         && part

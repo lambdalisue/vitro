@@ -413,6 +413,84 @@ fn exec_script_with_nothing_after_it_runs_in_the_only_vm() {
 
 #[cfg(unix)]
 #[test]
+fn exec_detach_prints_only_the_job_so_a_script_can_keep_it() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin_with("ssh", "echo 4242");
+
+    let run = sandbox
+        .run(&["exec", "--detach", "linux", "cargo", "build"])
+        .success();
+
+    let job = run.stdout.trim();
+    assert!(job.starts_with("linux-7f3a2c:"), "{job}");
+    assert_eq!(job.lines().count(), 1, "{job}");
+    let call = sandbox.calls("ssh").pop().unwrap();
+    assert!(call.contains("nohup"), "{call}");
+}
+
+#[cfg(unix)]
+#[test]
+fn attach_prints_the_jobs_output_and_exits_with_its_code() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    // "aGVsbG8K" is "hello\n".
+    sandbox.fake_bin_with("ssh", r#"printf 'exit:4\naGVsbG8K\n'"#);
+
+    let run = sandbox.run(&["attach", ":a3f9c2"]);
+
+    assert_eq!(run.code, 4, "stderr: {}", run.stderr);
+    assert_eq!(run.stdout, "hello\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn attach_to_a_job_that_is_not_there_says_so() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 3);
+
+    sandbox
+        .run(&["attach", "linux:a3f9c2"])
+        .failure()
+        .stderr_contains("has no job a3f9c2");
+}
+
+#[test]
+fn attach_to_something_that_is_not_a_job_is_refused_at_once() {
+    Sandbox::new()
+        .run(&["attach", "linux"])
+        .failure()
+        .stderr_contains("<vm>:<id>");
+}
+
+#[cfg(unix)]
+#[test]
+fn jobs_lists_each_job_with_how_it_stands() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin_with(
+        "ssh",
+        r#"printf 'a3f9c2\trunning\tcargo build\n0b1c2d\texit:1\tmake check\n'"#,
+    );
+
+    let run = sandbox.run(&["jobs"]).success();
+
+    assert!(
+        run.stdout
+            .contains("linux-7f3a2c:a3f9c2  running    cargo build"),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("linux-7f3a2c:0b1c2d  exit 1"),
+        "{}",
+        run.stdout
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn restart_returns_only_once_the_guest_has_booted_again() {
     // The first two answers come from the boot the restart was asked of; only
     // the third is a new one.

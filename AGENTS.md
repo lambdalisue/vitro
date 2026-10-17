@@ -81,6 +81,7 @@ Commits before this convention was adopted use Conventional Commits
 | `config` | `src/config.rs`, `src/units.rs`, `src/paths.rs`, `src/tools.rs` |
 | `state` | `src/state.rs`, `src/process.rs`, `src/signals.rs` |
 | `qemu` | `src/qemu.rs`, `src/qmp.rs` |
+| `jobs` | `src/jobs.rs`, `src/commands/jobs.rs` |
 | `lume` | `src/lume.rs` |
 | `project` | `src/project.rs`, `src/commands/test.rs` |
 | `script` | `src/script.rs` |
