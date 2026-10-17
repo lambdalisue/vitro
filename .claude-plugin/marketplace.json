@@ -1,0 +1,17 @@
+{
+  "name": "vitro",
+  "description": "Claude Code plugins for vitro, disposable development VMs driven from a CLI",
+  "owner": {
+    "name": "lambdalisue",
+    "url": "https://github.com/lambdalisue"
+  },
+  "plugins": [
+    {
+      "name": "vitro",
+      "source": "./plugins/vitro",
+      "description": "Teaches an agent to run commands, builds and tests in disposable Windows, macOS and Linux VMs with the vitro CLI",
+      "category": "development",
+      "tags": ["vm", "testing", "windows", "macos", "qemu"]
+    }
+  ]
+}
