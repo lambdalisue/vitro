@@ -9,6 +9,11 @@ use serde::Serialize;
 
 use crate::{commands::ls, Config, Paths, ProcessProbe, Store};
 
+/// How long a VM may run before `status` asks what it is for. A day, because
+/// a VM that has seen one night has stopped being a scratch machine and turned
+/// into a machine somebody is keeping without meaning to.
+const LONG_LIVED_SECONDS: u64 = 24 * 60 * 60;
+
 #[derive(Debug, Serialize)]
 pub struct Status {
     #[serde(flatten)]
@@ -56,6 +61,16 @@ fn suggestions(paths: &Paths, config: &Config, listing: &ls::Listing) -> Vec<Str
 
     for vm in &running {
         next.push(format!("vitro exec {} <command>", vm.name));
+    }
+    for vm in &running {
+        if let Some(uptime) = vm.uptime_seconds.filter(|s| *s >= LONG_LIVED_SECONDS) {
+            next.push(format!(
+                "{0} has been up {1}: `vitro promote {0}` keeps it as an image, \
+                 `vitro destroy {0}` ends it",
+                vm.name,
+                ls::humanize_duration(uptime)
+            ));
+        }
     }
     if let Some(vm) = running.first() {
         next.push(format!("vitro destroy {}", vm.name));
@@ -116,6 +131,10 @@ mod tests {
     }
 
     fn save(paths: &Paths, name: &str, pid: u32) {
+        save_created(paths, name, pid, OffsetDateTime::UNIX_EPOCH);
+    }
+
+    fn save_created(paths: &Paths, name: &str, pid: u32, created_at: OffsetDateTime) {
         let store = Store::new(paths.state_dir());
         store
             .save(&VmRecord {
@@ -131,7 +150,7 @@ mod tests {
                 golden: Golden::Image(PathBuf::from("/srv/linux.qcow2")),
                 qmp_socket: None,
                 dir: store.vm_dir(name),
-                created_at: OffsetDateTime::UNIX_EPOCH,
+                created_at,
             })
             .unwrap();
     }
@@ -176,6 +195,57 @@ mod tests {
                 .next
                 .iter()
                 .any(|s| s == "vitro destroy linux-7f3a2c"),
+            "{:?}",
+            status.next
+        );
+    }
+
+    fn configured() -> (tempfile::TempDir, Paths) {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::from_env(&Default::default(), temp.path());
+        std::fs::create_dir_all(paths.config_dir()).unwrap();
+        std::fs::write(paths.config_file(), "").unwrap();
+        (temp, paths)
+    }
+
+    #[test]
+    fn a_vm_up_for_more_than_a_day_is_offered_promote_or_destroy() {
+        let (_temp, paths) = configured();
+        let three_days_ago = ls::now() - time::Duration::days(3);
+        save_created(&paths, "linux-7f3a2c", 4_000_000, three_days_ago);
+
+        let status = collect(
+            &paths,
+            &Config::default(),
+            &FakeProbe(HashMap::from([(4_000_000, 1_000)])),
+            None,
+        )
+        .unwrap();
+
+        let advice = status
+            .next
+            .iter()
+            .find(|s| s.contains("up 3d"))
+            .unwrap_or_else(|| panic!("{:?}", status.next));
+        assert!(advice.contains("vitro promote linux-7f3a2c"), "{advice}");
+        assert!(advice.contains("vitro destroy linux-7f3a2c"), "{advice}");
+    }
+
+    #[test]
+    fn a_vm_started_today_gets_no_such_advice() {
+        let (_temp, paths) = configured();
+        save_created(&paths, "linux-7f3a2c", 4_000_000, ls::now());
+
+        let status = collect(
+            &paths,
+            &Config::default(),
+            &FakeProbe(HashMap::from([(4_000_000, 1_000)])),
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            !status.next.iter().any(|s| s.contains("promote")),
             "{:?}",
             status.next
         );
