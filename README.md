@@ -63,6 +63,15 @@ $ brew install qemu                        # macOS
 $ sudo apt install qemu-system qemu-utils  # Debian, Ubuntu
 ```
 
+With Nix, the flake installs vitro with its shell completions. Main's builds
+are kept in a Cachix cache, so with it added this is a download rather than a
+Rust build:
+
+```console
+$ cachix use vitro                                 # optional: prebuilt binaries
+$ nix profile install github:lambdalisue/vitro
+```
+
 Then let vitro do the rest:
 
 ```console
