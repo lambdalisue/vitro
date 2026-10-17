@@ -1,6 +1,13 @@
-# vitro
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/vitro-header-dark.svg">
+    <img alt="vitro" src="docs/images/vitro-header-light.svg" width="420">
+  </picture>
+</p>
 
-Disposable development VMs driven from a CLI.
+<p align="center">
+  <strong>Disposable development VMs driven from a CLI.</strong>
+</p>
 
 _In vitro_ — in glass — is work done outside the living organism, precisely so
 the organism is not put at risk. That is what this is for: the machine you ruin
