@@ -34,15 +34,23 @@ fn windows_runner(script: &Path) -> Option<WindowsRunner> {
 /// copied or booted. A Unix guest runs anything: a file without a `#!` line is
 /// run by `sh`.
 pub fn check(script: &Path, guest: Guest) -> Result<()> {
-    if !script.is_file() {
-        bail!("script {} does not exist", script.display());
-    }
+    exists(script)?;
     if guest == Guest::Windows && windows_runner(script).is_none() {
         bail!(
             "a Windows guest runs a script by its extension, and {} has none it knows; \
              use {WINDOWS_EXTENSIONS}",
             script.display()
         );
+    }
+    Ok(())
+}
+
+/// The half of [`check`] that needs no VM, for a caller to make before it
+/// looks for one: a mistyped path should be reported as that, not as whatever
+/// else happens to be missing first.
+pub fn exists(script: &Path) -> Result<()> {
+    if !script.is_file() {
+        bail!("script {} does not exist", script.display());
     }
     Ok(())
 }
