@@ -55,6 +55,23 @@ removed on the host are not removed from the guest.
 
 If the copy fails, the command does not run.
 
+## Leaving a command running
+
+`exec --detach` starts the command in the guest and returns at once, printing
+only the job it started, written `<vm>:<id>`. The job goes on whether or not
+any connection to the guest stays open, and takes `--sync`, `--cwd` and
+`--env` as a command run in the foreground would.
+
+`vitro attach <vm>:<id>` prints the job's output from its start and follows it
+until the job ends, then exits with the job's exit code. Interrupting `attach`
+stops the following, not the job, and attaching again starts from the
+beginning of the output; a job that already ended prints its output and exits
+with its code. A job whose process vanished without an exit code — the guest
+restarted, or something killed it — is reported as lost.
+
+`vitro jobs [<vm>]` lists a VM's jobs, each as running, its exit code, or lost.
+Jobs live in the guest and go when the VM is destroyed.
+
 ## In a VM started for it
 
 `vitro run <image> -- <command>` starts a VM and runs the command in it as

@@ -6,7 +6,7 @@ use clap::{CommandFactory, Parser};
 
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
-    build, cp, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
+    build, cp, destroy, doctor, exec, forward, gui, inspect, jobs, keygen, ls, promote, run, setup,
     sshconfig, status, test, wait,
 };
 use vitro::{golden, ssh, Config, Golden, Paths, Store, SysinfoProbe};
@@ -170,12 +170,21 @@ fn dispatch(cli: Cli) -> Result<i32> {
             cwd,
             env,
             script,
+            detach,
             args,
         }) => {
             // Before the VM is looked up, so a typo costs no connection.
             let prelude = parse_prelude(cwd, &env)?;
             let store = Store::new(paths.state_dir());
             let probe = SysinfoProbe::new();
+            if detach {
+                let (name, command) = store.split_leading_vm(&args, &probe)?;
+                let job = jobs::start(&paths, &config, &name, &command, sync.as_deref(), prelude)?;
+                // The job alone on stdout, so `job=$(vitro exec --detach …)` works.
+                println!("{job}");
+                eprintln!("vitro: follow it with `vitro attach {job}`");
+                return Ok(0);
+            }
             match &script {
                 Some(path) => {
                     vitro::script::exists(path)?;
@@ -307,6 +316,23 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
         Some(Command::Cp { operands }) => cp::cp(&paths, &config, &operands),
+
+        Some(Command::Attach { job }) => {
+            let job = vitro::jobs::JobRef::parse(&job)?;
+            jobs::attach(&paths, &config, &job, &mut std::io::stdout().lock())
+        }
+
+        Some(Command::Jobs { name }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
+            let listed = jobs::list(&paths, &config, &name)?;
+            if listed.is_empty() {
+                println!("no jobs in {name}");
+            }
+            for (id, status, command) in listed {
+                println!("{name}:{id}  {:<9}  {command}", status.to_string());
+            }
+            Ok(0)
+        }
 
         Some(Command::Restart {
             name,

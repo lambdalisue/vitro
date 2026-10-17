@@ -123,6 +123,10 @@ pub enum Command {
         /// .ps1, .cmd or .bat
         #[arg(long, value_name = "FILE")]
         script: Option<PathBuf>,
+        /// Leave the command running in the guest and print its job, for
+        /// `vitro attach` to follow
+        #[arg(long, conflicts_with = "script")]
+        detach: bool,
         #[arg(
             trailing_var_arg = true,
             required_unless_present = "script",
@@ -133,6 +137,16 @@ pub enum Command {
 
     /// Open an interactive shell in a VM
     Ssh { name: Option<String> },
+
+    /// Follow a job's output until it ends, and exit with its exit code
+    ///
+    /// The job is written `<vm>:<id>`, as `exec --detach` printed it, or
+    /// `:<id>` while only one VM is running. Ctrl-C stops following; the job
+    /// goes on.
+    Attach { job: String },
+
+    /// List the jobs in a VM and how each stands
+    Jobs { name: Option<String> },
 
     /// Restart a VM's guest and return once it is back
     ///

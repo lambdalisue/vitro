@@ -214,6 +214,8 @@ without touching the configuration.
 | `run <image> [-- <cmd>…]` | Start a VM, and run a command or `--script` in it (`--rm`, `--sync`, `--cpus`, `--memory`, `--golden`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
+| `attach <vm>:<job>`      | Follow a job `exec --detach` started, and exit with its code |
+| `jobs [<vm>]`            | List a VM's jobs and how each stands                 |
 | `wait [<vm>]`            | Wait until a VM answers again (`--desktop`, `--timeout`) |
 | `restart [<vm>]`         | Restart the guest and return once it has booted again |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
@@ -271,6 +273,16 @@ $ vitro exec --script ./collect-logs.ps1 windows -Since 1h
 
 On a Windows guest every `exec` sees `PATH` as it stands now, so a tool
 installed earlier in the session is found without restarting the guest.
+
+A build longer than an SSH connection is worth trusting can be left running in
+the guest. `exec --detach` starts it and prints its job; `attach` follows its
+output from the start and exits with its exit code, and can be run again after
+Ctrl-C or a dropped connection:
+
+```console
+$ job=$(vitro exec --detach --sync . windows cargo build --release)
+$ vitro attach "$job"
+```
 
 ## Testing a project
 
