@@ -134,6 +134,21 @@ pub enum Command {
     /// Open an interactive shell in a VM
     Ssh { name: Option<String> },
 
+    /// Restart a VM's guest and return once it is back
+    ///
+    /// Unlike `wait` after a restart asked for some other way, this cannot
+    /// return early: it waits for a different boot, not just for an answer.
+    Restart {
+        name: Option<String>,
+        /// Also wait for somebody to be logged in to the desktop (Windows, macOS)
+        #[arg(long)]
+        desktop: bool,
+        /// Give up after this long, such as `90s` or `10m`; the image's boot
+        /// timeout by default
+        #[arg(long, value_name = "DURATION", value_parser = humantime::parse_duration)]
+        timeout: Option<std::time::Duration>,
+    },
+
     /// Wait until a VM answers over SSH again, or has a desktop
     ///
     /// For after the guest restarts, or before launching a GUI program on a

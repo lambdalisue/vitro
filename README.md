@@ -215,6 +215,7 @@ without touching the configuration.
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `wait [<vm>]`            | Wait until a VM answers again (`--desktop`, `--timeout`) |
+| `restart [<vm>]`         | Restart the guest and return once it has booted again |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
 | `test [<image>…]`        | Run the project's `vitro.toml` command on each image |
 | `destroy <vm>` / `--all` | Stop a VM and delete its overlay                     |

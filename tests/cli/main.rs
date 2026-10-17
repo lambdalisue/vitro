@@ -413,6 +413,53 @@ fn exec_script_with_nothing_after_it_runs_in_the_only_vm() {
 
 #[cfg(unix)]
 #[test]
+fn restart_returns_only_once_the_guest_has_booted_again() {
+    // The first two answers come from the boot the restart was asked of; only
+    // the third is a new one.
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin_with(
+        "ssh",
+        r#"case "$*" in
+  *boot_id*)
+    n=$(cat "$HOME/boots" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$HOME/boots"
+    if [ "$n" -le 2 ]; then echo first-boot; else echo second-boot; fi ;;
+esac
+exit 0"#,
+    );
+
+    sandbox.run(&["restart", "--timeout", "30s"]).success();
+
+    let boots = std::fs::read_to_string(sandbox.home().join("boots")).unwrap();
+    assert_eq!(boots.trim(), "3");
+    assert!(
+        sandbox
+            .calls("ssh")
+            .iter()
+            .any(|c| c.contains("shutdown -r now")),
+        "{:?}",
+        sandbox.calls("ssh")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_guest_that_refuses_to_restart_is_reported_rather_than_waited_on() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin_with(
+        "ssh",
+        r#"case "$*" in *boot_id*) echo first-boot; exit 0 ;; *shutdown*) exit 1 ;; esac; exit 0"#,
+    );
+
+    sandbox
+        .run(&["restart", "linux"])
+        .failure()
+        .stderr_contains("refused to restart");
+}
+
+#[cfg(unix)]
+#[test]
 fn wait_returns_once_the_vm_answers() {
     let sandbox = Sandbox::new();
     sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
