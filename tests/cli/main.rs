@@ -722,6 +722,25 @@ fn test_runs_the_projects_command_in_a_fresh_vm_and_reports_the_verdict() {
     assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
 }
 
+#[cfg(unix)]
+#[test]
+fn test_reports_a_failed_sync_as_that_images_verdict_instead_of_aborting() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 1);
+    sandbox.write_file(
+        "app/vitro.toml",
+        b"images = [\"linux\"]\ncommand = [\"make\"]\n",
+    );
+
+    sandbox
+        .run_in(&sandbox.home().join("app"), &["test"])
+        .failure()
+        .stderr_contains("linux  did not run: could not copy");
+
+    assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
+}
+
 #[test]
 fn test_refuses_an_unknown_image_before_starting_anything() {
     let sandbox = Sandbox::new();

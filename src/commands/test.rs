@@ -16,6 +16,9 @@ pub enum Outcome {
     Exited(i32),
     /// No VM came up, so the command never ran.
     DidNotStart(String),
+    /// The VM came up but the command could not be run in it, most often
+    /// because the project could not be sent.
+    DidNotRun(String),
 }
 
 pub struct Options {
@@ -61,7 +64,9 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                 },
             },
         ) {
-            Ok(record) => Outcome::Exited(run::then(
+            // A failure here belongs to this image alone; the others still
+            // run, and the summary still names every one.
+            Ok(record) => match run::then(
                 paths,
                 config,
                 &record.name,
@@ -74,7 +79,10 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                     },
                     remove: true,
                 },
-            )?),
+            ) {
+                Ok(code) => Outcome::Exited(code),
+                Err(e) => Outcome::DidNotRun(format!("{e:#}")),
+            },
             Err(e) => Outcome::DidNotStart(format!("{e:#}")),
         };
         results.push((image.clone(), outcome));
@@ -102,6 +110,7 @@ pub fn summary(results: &[(String, Outcome)]) -> String {
                 Outcome::Exited(0) => "passed".to_string(),
                 Outcome::Exited(code) => format!("failed (exit code {code})"),
                 Outcome::DidNotStart(reason) => format!("did not start: {reason}"),
+                Outcome::DidNotRun(reason) => format!("did not run: {reason}"),
             };
             format!("{image:<width$}  {verdict}\n")
         })
@@ -116,7 +125,7 @@ pub fn exit_code(results: &[(String, Outcome)]) -> i32 {
         .find_map(|(_, outcome)| match outcome {
             Outcome::Exited(0) => None,
             Outcome::Exited(code) => Some(*code),
-            Outcome::DidNotStart(_) => Some(1),
+            Outcome::DidNotStart(_) | Outcome::DidNotRun(_) => Some(1),
         })
         .unwrap_or(0)
 }
@@ -151,6 +160,14 @@ mod tests {
         ]);
 
         assert_eq!(exit_code(&results), 101);
+    }
+
+    #[test]
+    fn a_command_that_could_not_be_run_is_a_failure_with_its_reason() {
+        let results = results(&[("windows", Outcome::DidNotRun("could not copy".into()))]);
+
+        assert_eq!(exit_code(&results), 1);
+        assert_eq!(summary(&results), "windows  did not run: could not copy\n");
     }
 
     #[test]

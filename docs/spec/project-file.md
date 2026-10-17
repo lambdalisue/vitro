@@ -53,10 +53,11 @@ configuration before any VM starts.
 
 For each image in turn, it does what `vitro run --rm` does with the project's
 settings: start a fresh VM, send the project, run the command with `<args>`
-appended, and destroy the VM. It ends with one line per image saying whether
-the command passed, failed with which exit code, or never ran because the VM
-did not start.
+appended, and destroy the VM. A failure on one image does not stop the
+others. It ends with one line per image saying whether the command passed,
+failed with which exit code, or never ran because the VM did not start or the
+project could not be sent.
 
 With one image it exits with that command's exit code. With several it exits
-with the first failure's code, `1` for a VM that did not start, or `0` when
+with the first failure's code, `1` for a command that never ran, or `0` when
 every image passed.

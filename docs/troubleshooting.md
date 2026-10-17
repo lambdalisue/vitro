@@ -86,6 +86,18 @@ $ vitro exec vm sh -c 'ls | wc -l'  # what you meant
 A Windows guest receives the command verbatim in PowerShell instead, so
 operators work directly there and the quoting is yours to get right.
 
+## A Windows command prints nothing, but its exit code arrives
+
+PowerShell 5.1 holds back a cmdlet's table output while it works out the
+column widths, and `exit` straight after it throws the held output away.
+`Get-Location; exit 7` prints nothing and exits 7. A native program such as
+`cargo` writes directly and is not affected. Pipe the cmdlet through
+`Out-String` to print it before exiting:
+
+```console
+$ vitro exec windows 'Get-Location | Out-String; exit 7'
+```
+
 ## Something else is using the state directory
 
 Two vitro processes will not write the same state directory at once, and the
