@@ -219,9 +219,9 @@ needs more; a Windows image takes a `.ps1`, `.cmd` or `.bat`.
 How far each has run: `linux-devtools.sh` from start to finish on a fresh
 Debian 13 guest. `macos-devtools.sh` from start to finish, and again over its
 own result, on a macOS 26 guest from lume's `tahoe` preset. `windows-devtools.ps1`
-on a Windows 11 ARM64 guest that already had the build tools, LLVM and Rust, so
-of its installs only Git's has run; it has not yet provisioned an image during
-`build`.
+as the `provision` of a Windows 11 ARM64 image built from scratch, which took
+half an hour and left an image in which a plain `vitro exec` builds and runs a
+Rust program with the MSVC linker.
 
 For anything installed later by hand, `promote` keeps it: it turns the VM into a
 golden image, and `run --golden <name>` starts from that image without editing

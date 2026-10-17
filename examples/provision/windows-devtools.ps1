@@ -37,7 +37,12 @@ function Get-ReleaseAsset([string]$Repo, [string]$Pattern) {
 }
 
 function Invoke-Installer([string]$Path, [string[]]$Arguments) {
-    $process = Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru
+    # An .msi is not a program; msiexec runs it.
+    $process = if ($Path -like '*.msi') {
+        Start-Process -FilePath msiexec.exe -ArgumentList (@('/i', "`"$Path`"") + $Arguments) -Wait -PassThru
+    } else {
+        Start-Process -FilePath $Path -ArgumentList $Arguments -Wait -PassThru
+    }
     # 3010: installed, and wants a restart, which the build's shutdown gives it.
     if ($process.ExitCode -notin 0, 3010) {
         throw "$(Split-Path -Leaf $Path) exited with $($process.ExitCode)"
@@ -72,11 +77,14 @@ if (-not $present) {
         '--includeRecommended'
 }
 
-# LLVM. Its silent install does not touch PATH, so bin is added here.
+# LLVM. Releases have shipped the Windows installer as an .exe and, lately, as
+# an .msi, so either is taken. Its silent install does not touch PATH, so bin
+# is added here.
 if (-not (Test-Path "$env:ProgramFiles\LLVM\bin\clang.exe")) {
-    $pattern = if ($arm) { '^LLVM-.*-woa64\.exe$' } else { '^LLVM-.*-win64\.exe$' }
+    $pattern = if ($arm) { '^LLVM-.*-woa64\.(msi|exe)$' } else { '^LLVM-.*-win64\.(msi|exe)$' }
     $llvm = Get-ReleaseAsset 'llvm/llvm-project' $pattern
-    Invoke-Installer $llvm '/S'
+    $quiet = if ($llvm -like '*.msi') { @('/qn', '/norestart') } else { @('/S') }
+    Invoke-Installer $llvm $quiet
 }
 Add-MachinePath "$env:ProgramFiles\LLVM\bin"
 
