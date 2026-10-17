@@ -242,33 +242,92 @@ impl Store {
 
     /// Turn what the user typed into a VM name.
     ///
-    /// An exact name wins, then an unambiguous prefix — a generated name ends
-    /// in six hex digits, and nobody wants to type them. An ambiguous prefix
-    /// lists the candidates instead of picking one: these names are arguments
-    /// to `destroy`.
+    /// An exact name wins, then the image a VM was started from, then an
+    /// unambiguous prefix — a generated name ends in six hex digits, and nobody
+    /// wants to type them. Anything that matches several lists the candidates
+    /// instead of picking one: these names are arguments to `destroy`.
     pub fn resolve(&self, name: impl AsRef<str>) -> Result<String> {
         let name = name.as_ref();
-        let names: Vec<String> = self
-            .list()?
+        match self.find(name)? {
+            Some(found) => Ok(found),
+            None => bail!("no VM is called {name:?}; `vitro ls` shows what there is"),
+        }
+    }
+
+    /// [`Store::resolve`], with "nothing matched" as `None` rather than an
+    /// error, so a caller can try the word as something else.
+    fn find(&self, name: &str) -> Result<Option<String>> {
+        let entries = self.list()?;
+
+        if entries.iter().any(|entry| entry.name() == name) {
+            return Ok(Some(name.to_owned()));
+        }
+        let from_image: Vec<String> = entries
             .iter()
+            .filter(|entry| matches!(entry, Entry::Vm(record) if record.image == name))
             .map(|entry| entry.name().to_owned())
             .collect();
+        if !from_image.is_empty() {
+            return only_one(name, from_image).map(Some);
+        }
+        let prefixed: Vec<String> = entries
+            .iter()
+            .map(Entry::name)
+            .filter(|known| known.starts_with(name))
+            .map(str::to_owned)
+            .collect();
+        if prefixed.is_empty() {
+            return Ok(None);
+        }
+        only_one(name, prefixed).map(Some)
+    }
 
-        if names.iter().any(|known| known == name) {
-            return Ok(name.to_owned());
+    /// Split `<vm> <command>…` where the VM may be left out.
+    ///
+    /// The first word is the VM when it names one; otherwise every word is the
+    /// command, and it goes to the one VM that is running. A word that names
+    /// several VMs is refused rather than run, because a command that happens
+    /// to share a VM's prefix should not be guessed into either role.
+    pub fn split_leading_vm(
+        &self,
+        words: &[String],
+        probe: &impl ProcessProbe,
+    ) -> Result<(String, Vec<String>)> {
+        if let [first, rest @ ..] = words {
+            if !rest.is_empty() {
+                if let Some(name) = self.find(first)? {
+                    return Ok((name, rest.to_vec()));
+                }
+            }
         }
-        let mut matched = names.into_iter().filter(|known| known.starts_with(name));
-        let Some(first) = matched.next() else {
-            bail!("no VM is called {name:?}; `vitro ls` shows what there is");
-        };
-        let rest: Vec<String> = matched.collect();
-        if rest.is_empty() {
-            return Ok(first);
+        Ok((self.resolve_or_sole(None, probe)?, words.to_vec()))
+    }
+
+    /// [`Store::resolve`] when a name was given, and otherwise the one VM that
+    /// is running.
+    ///
+    /// Only running VMs count: a dead record is not something anyone means,
+    /// and counting it would make the shortcut fail for a reason `ls --prune`
+    /// exists to clear.
+    pub fn resolve_or_sole(&self, name: Option<&str>, probe: &impl ProcessProbe) -> Result<String> {
+        if let Some(name) = name {
+            return self.resolve(name);
         }
-        let mut all = vec![first];
-        all.extend(rest);
-        all.sort();
-        bail!("{name:?} matches {}; say which one", all.join(", "))
+        let running: Vec<String> = self
+            .list()?
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Entry::Vm(record) if record.liveness(probe) == Liveness::Running => {
+                    Some(record.name)
+                }
+                _ => None,
+            })
+            .collect();
+        match running.as_slice() {
+            [] => bail!("no VM is running; `vitro run <image>` starts one"),
+            [only] => Ok(only.clone()),
+            several => bail!("{} are running; say which one", several.join(", ")),
+        }
     }
 
     fn read_record(&self, dir: &Path) -> Result<VmRecord> {
@@ -338,6 +397,14 @@ impl Store {
             Err(e) => Err(e).with_context(|| format!("cannot lock {}", path.display())),
         }
     }
+}
+
+fn only_one(typed: &str, mut candidates: Vec<String>) -> Result<String> {
+    if candidates.len() == 1 {
+        return Ok(candidates.remove(0));
+    }
+    candidates.sort();
+    bail!("{typed:?} matches {}; say which one", candidates.join(", "))
 }
 
 /// Whether a refused lock means somebody else is holding it.
@@ -534,6 +601,188 @@ mod tests {
 
         assert!(!store.vm_dir("linux-7f3a2c").exists());
         assert_eq!(store.list().unwrap(), Vec::new());
+    }
+
+    fn record_from(name: &str, image: &str, pid: u32) -> VmRecord {
+        VmRecord {
+            image: image.into(),
+            pid,
+            ..record(name)
+        }
+    }
+
+    #[test]
+    fn an_image_key_names_the_only_vm_started_from_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 1))
+            .unwrap();
+        store
+            .save(&record_from("windows-01aa02", "windows", 2))
+            .unwrap();
+
+        assert_eq!(store.resolve("windows").unwrap(), "windows-01aa02");
+    }
+
+    #[test]
+    fn an_image_key_shared_by_several_vms_lists_them_instead_of_guessing() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store.save(&record_from("box-a", "linux", 1)).unwrap();
+        store.save(&record_from("box-b", "linux", 2)).unwrap();
+
+        let err = store.resolve("linux").unwrap_err().to_string();
+
+        assert!(err.contains("box-a, box-b"), "{err}");
+    }
+
+    #[test]
+    fn an_exact_name_wins_over_an_image_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store.save(&record_from("linux", "debian", 1)).unwrap();
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 2))
+            .unwrap();
+
+        assert_eq!(store.resolve("linux").unwrap(), "linux");
+    }
+
+    #[test]
+    fn an_image_key_wins_over_a_prefix_of_another_images_vm() {
+        // `win` is a prefix of `windows-…` too, but the user named an image.
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store.save(&record_from("win-aaaaaa", "win", 1)).unwrap();
+        store
+            .save(&record_from("windows-bbbbbb", "windows", 2))
+            .unwrap();
+
+        assert_eq!(store.resolve("win").unwrap(), "win-aaaaaa");
+    }
+
+    #[test]
+    fn the_only_running_vm_is_chosen_when_none_is_named() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-alive", "linux", 100))
+            .unwrap();
+        store
+            .save(&record_from("linux-gone", "linux", 200))
+            .unwrap();
+        let probe = FakeProbe::with(100, record("x").pid_start_time);
+
+        assert_eq!(store.resolve_or_sole(None, &probe).unwrap(), "linux-alive");
+    }
+
+    #[test]
+    fn a_named_vm_is_resolved_as_usual_even_when_another_is_the_only_one_running() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 100))
+            .unwrap();
+
+        assert_eq!(
+            store
+                .resolve_or_sole(Some("linux-7f"), &FakeProbe::empty())
+                .unwrap(),
+            "linux-7f3a2c"
+        );
+    }
+
+    #[test]
+    fn leaving_the_name_out_with_nothing_running_says_how_to_start_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+
+        let err = store
+            .resolve_or_sole(None, &FakeProbe::empty())
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("vitro run"), "{err}");
+    }
+
+    #[test]
+    fn leaving_the_name_out_with_several_running_lists_them() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        let start = record("x").pid_start_time;
+        store.save(&record_from("linux-a", "linux", 100)).unwrap();
+        store.save(&record_from("linux-b", "linux", 200)).unwrap();
+        let probe = FakeProbe(HashMap::from([(100, start), (200, start)]));
+
+        let err = store.resolve_or_sole(None, &probe).unwrap_err().to_string();
+
+        assert!(err.contains("linux-a, linux-b"), "{err}");
+    }
+
+    fn words(text: &str) -> Vec<String> {
+        text.split_whitespace().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_leading_word_that_names_a_vm_is_the_vm_and_the_rest_is_the_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 100))
+            .unwrap();
+
+        let (name, command) = store
+            .split_leading_vm(&words("linux cargo test"), &FakeProbe::empty())
+            .unwrap();
+
+        assert_eq!(name, "linux-7f3a2c");
+        assert_eq!(command, ["cargo", "test"]);
+    }
+
+    #[test]
+    fn a_leading_word_that_names_no_vm_is_the_command_for_the_only_running_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 100))
+            .unwrap();
+        let probe = FakeProbe::with(100, record("x").pid_start_time);
+
+        let (name, command) = store
+            .split_leading_vm(&words("cargo test"), &probe)
+            .unwrap();
+
+        assert_eq!(name, "linux-7f3a2c");
+        assert_eq!(command, ["cargo", "test"]);
+    }
+
+    #[test]
+    fn a_lone_word_is_always_a_command_since_a_vm_alone_runs_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store.save(&record_from("hostname", "linux", 100)).unwrap();
+        let probe = FakeProbe::with(100, record("x").pid_start_time);
+
+        let (name, command) = store.split_leading_vm(&words("hostname"), &probe).unwrap();
+
+        assert_eq!(name, "hostname");
+        assert_eq!(command, ["hostname"]);
+    }
+
+    #[test]
+    fn an_ambiguous_leading_word_is_refused_rather_than_run_as_a_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store.save(&record_from("linux-a", "linux", 100)).unwrap();
+        store.save(&record_from("linux-b", "linux", 200)).unwrap();
+
+        let err = store
+            .split_leading_vm(&words("linux uname"), &FakeProbe::empty())
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("linux-a, linux-b"), "{err}");
     }
 
     #[test]

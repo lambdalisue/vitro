@@ -234,6 +234,52 @@ fn a_unique_prefix_is_enough_to_name_a_vm() {
 }
 
 #[test]
+fn the_image_a_vm_came_from_is_enough_to_name_it() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+
+    sandbox
+        .run(&["port", "linux"])
+        .success()
+        .stdout_is("53422\n");
+}
+
+#[test]
+fn the_vm_can_be_left_out_while_only_one_is_running() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.write_vm_record("linux-deadbe", 4_000_000, 53423);
+
+    sandbox.run(&["port"]).success().stdout_is("53422\n");
+}
+
+#[test]
+fn leaving_the_vm_out_while_several_run_lists_them() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-aaaaaa", std::process::id(), 53422);
+    sandbox.write_vm_record("linux-bbbbbb", std::process::id(), 53423);
+
+    sandbox
+        .run(&["port"])
+        .failure()
+        .stderr_contains("linux-aaaaaa, linux-bbbbbb");
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_without_a_vm_runs_the_whole_line_in_the_only_running_one() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox.run(&["exec", "uname", "-a"]).success();
+
+    let call = sandbox.calls("ssh").pop().expect("ssh should have run");
+    assert!(call.contains("-p 53422"), "{call}");
+    assert!(call.ends_with("-- uname -a"), "{call}");
+}
+
+#[test]
 fn a_dead_vms_port_is_refused_rather_than_pointing_at_whatever_took_it_over() {
     let sandbox = Sandbox::new();
     sandbox.write_vm_record("linux-7f3a2c", 4_000_000, 53422);
