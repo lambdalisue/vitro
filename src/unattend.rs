@@ -444,6 +444,18 @@ foreach ($timeout in 'monitor-timeout-ac', 'monitor-timeout-dc',
 }
 Note "display and sleep timeouts disabled"
 
+# Windows Update restarts a machine on its own once an update is staged, which
+# on a guest means SSH dropping a minute or two after `run` said it was up. A
+# disposable guest gains nothing from patching itself, and the golden image is
+# rebuilt to take updates in, so the policy turns automatic updates off and, for
+# anything already staged, forbids a restart while somebody is logged in — and
+# auto-logon means somebody always is.
+$au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+New-Item -Path $au -Force | Out-Null
+Set-ItemProperty -Path $au -Name NoAutoUpdate -Value 1 -Type DWord
+Set-ItemProperty -Path $au -Name NoAutoRebootWithLoggedOnUsers -Value 1 -Type DWord
+Note "automatic updates and update restarts disabled"
+
 # An OpenSSH session on Windows runs cmd.exe unless told otherwise, and vitro
 # quotes the arguments it sends with single quotes — which cmd does not treat
 # as quoting at all. Fixing the shell here is what lets one quoting rule serve
@@ -648,6 +660,20 @@ mod tests {
 
         assert!(script.contains("monitor-timeout-ac"), "{script}");
         assert!(script.contains("standby-timeout-ac"), "{script}");
+    }
+
+    #[test]
+    fn the_guest_never_updates_or_restarts_itself() {
+        // An update that restarts the guest drops SSH in the middle of whatever
+        // was running, a minute or two after `run` said the guest was up.
+        let script = setup_script(&Answers::default());
+
+        assert!(script.contains("NoAutoUpdate"), "{script}");
+        assert!(script.contains("NoAutoRebootWithLoggedOnUsers"), "{script}");
+        assert!(
+            script.contains(r"HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"),
+            "{script}"
+        );
     }
 
     #[test]
