@@ -1,4 +1,5 @@
 pub mod build;
+pub mod cp;
 pub mod destroy;
 pub mod doctor;
 pub mod exec;

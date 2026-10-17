@@ -6,7 +6,7 @@ use clap::Parser;
 
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
-    build, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
+    build, cp, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
     sshconfig, status,
 };
 use vitro::{golden, ssh, Config, Golden, Paths, Store, SysinfoProbe};
@@ -236,6 +236,8 @@ fn dispatch(cli: Cli) -> Result<i32> {
         }
 
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
+
+        Some(Command::Cp { operands }) => cp::cp(&paths, &config, &operands),
 
         Some(Command::Ssh { name }) => {
             let name = pick_vm(&paths, name.as_deref())?;
