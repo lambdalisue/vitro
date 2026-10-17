@@ -33,6 +33,7 @@ des = "0.9"
 fatfs = "0.3.6"
 fs4 = { version = "0.9", features = ["sync"] }
 fscommon = "0.1.1"
+humantime = "2.4.0"
 humantime-serde = "1"
 ignore = { version = "0.4.33", default-features = false }
 png = "0.18"

@@ -411,6 +411,51 @@ fn exec_script_with_nothing_after_it_runs_in_the_only_vm() {
     assert_eq!(sandbox.calls("scp").len(), 1);
 }
 
+#[cfg(unix)]
+#[test]
+fn wait_returns_once_the_vm_answers() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox.run(&["wait"]).success().stdout_is("");
+
+    assert!(!sandbox.calls("ssh").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_gives_up_after_its_timeout_and_says_on_what() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 255);
+
+    sandbox
+        .run(&["wait", "linux", "--timeout", "1s"])
+        .failure()
+        .stderr_contains("no SSH answer");
+}
+
+#[cfg(unix)]
+#[test]
+fn wait_for_the_desktop_of_a_linux_guest_is_refused_at_once() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox
+        .run(&["wait", "--desktop", "linux"])
+        .failure()
+        .stderr_contains("no desktop");
+}
+
+#[test]
+fn a_timeout_that_is_not_a_duration_is_a_usage_error() {
+    Sandbox::new()
+        .run(&["wait", "--timeout", "soon"])
+        .usage_error();
+}
+
 #[test]
 fn exec_script_refuses_a_file_that_is_not_there_before_anything_else() {
     // No VM and no ssh to be found either: the missing script is still what

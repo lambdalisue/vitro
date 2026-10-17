@@ -70,7 +70,17 @@ $ vitro destroy windows
 - Each `exec` sees PATH as the registry holds it now, so a tool you installed
   earlier in the session is found as it is. Do not prefix `$env:PATH` by hand.
 - `launch` starts a GUI program on the logged-in desktop, and `screenshot`
-  shows whether it appeared; `exec` runs outside that desktop.
+  shows whether it appeared; `exec` runs outside that desktop. Run
+  `vitro wait --desktop` first: auto-logon reaches the desktop after SSH does.
+
+## Waiting instead of sleeping
+
+Never poll a guest with `sleep`. `vitro wait <vm>` returns once the VM answers
+over SSH — after `Restart-Computer`, a reboot a script asked for, or anything
+else that took the guest away — and `vitro wait --desktop <vm>` once somebody
+is logged in to its desktop (Windows, macOS). `--timeout 10m` bounds either.
+A guest asked to restart keeps answering for a few seconds before it goes
+down, so leave those seconds before `vitro wait`, or it returns at once.
 
 ## Anything longer than one line: `--script`
 

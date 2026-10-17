@@ -214,6 +214,7 @@ without touching the configuration.
 | `run <image> [-- <cmd>…]` | Start a VM, and run a command or `--script` in it (`--rm`, `--sync`, `--cpus`, `--memory`, `--golden`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
+| `wait [<vm>]`            | Wait until a VM answers again (`--desktop`, `--timeout`) |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
 | `test [<image>…]`        | Run the project's `vitro.toml` command on each image |
 | `destroy <vm>` / `--all` | Stop a VM and delete its overlay                     |

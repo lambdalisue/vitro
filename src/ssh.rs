@@ -500,6 +500,19 @@ pub fn run_passthrough(ssh: &Path, target: &SshTarget, options: &SshOptions) -> 
     Ok(status.code().unwrap_or(255))
 }
 
+/// [`run_passthrough`] with nothing shown, for a probe whose exit code is the
+/// whole answer.
+pub fn run_quietly(ssh: &Path, target: &SshTarget, options: &SshOptions) -> Result<i32> {
+    let status = Command::new(ssh)
+        .args(ssh_args(target, options))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .with_context(|| format!("cannot run {}", ssh.display()))?;
+    Ok(status.code().unwrap_or(255))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

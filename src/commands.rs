@@ -14,3 +14,4 @@ pub mod setup;
 pub mod sshconfig;
 pub mod status;
 pub mod test;
+pub mod wait;
