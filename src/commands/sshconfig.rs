@@ -35,6 +35,7 @@ pub fn block(record: &VmRecord, target: &crate::ssh::SshTarget) -> String {
         target.known_hosts.display()
     ));
     out.push_str("  StrictHostKeyChecking accept-new\n");
+    out.push_str("  LogLevel ERROR\n");
     out
 }
 
@@ -235,6 +236,22 @@ mod tests {
             block.contains(&known_hosts.display().to_string()),
             "{block}"
         );
+    }
+
+    #[test]
+    fn a_block_is_as_quiet_as_vitro_exec() {
+        // Without it, every scp or rsync through the alias prints OpenSSH's
+        // post-quantum key exchange warning.
+        let temp = tempfile::tempdir().unwrap();
+        let paths = paths(temp.path());
+        let record = record("linux-7f3a2c", 4_000_000, 53422, PathBuf::from("/state/vm"));
+
+        let block = block(
+            &record,
+            &exec::ssh_target(&paths, &Config::default(), &record),
+        );
+
+        assert!(block.contains("  LogLevel ERROR\n"), "{block}");
     }
 
     #[test]
