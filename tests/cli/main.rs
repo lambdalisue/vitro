@@ -575,6 +575,55 @@ fn the_qemu_command_line_is_the_one_the_experiments_settled_on() {
 
 #[cfg(unix)]
 #[test]
+fn run_can_size_one_vm_differently_from_its_image() {
+    let sandbox = Sandbox::new();
+    let golden = sandbox.write_file(".local/share/vitro/golden/linux.qcow2", &[0u8; 1024]);
+    sandbox.write_config(&format!(
+        r#"
+        [images.linux]
+        golden = "{}"
+        ssh_user = "dev"
+        firmware = "/dev/null"
+        cpus = 2
+        memory = "4G"
+        "#,
+        golden.display()
+    ));
+    sandbox.fake_qemu("qemu-system-aarch64");
+    sandbox.fake_qemu("qemu-system-x86_64");
+    sandbox.fake_bin("qemu-img", 0);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox
+        .run(&["run", "--cpus", "8", "--memory", "16G", "linux"])
+        .success();
+
+    let line = [
+        sandbox.calls("qemu-system-aarch64"),
+        sandbox.calls("qemu-system-x86_64"),
+    ]
+    .concat()
+    .first()
+    .expect("qemu should have been run")
+    .clone();
+    assert!(line.contains("-smp 8"), "{line}");
+    assert!(line.contains("-m 16384"), "{line}");
+
+    sandbox.run(&["destroy", "--all"]).success();
+}
+
+#[test]
+fn a_size_that_is_not_a_size_is_a_usage_error() {
+    Sandbox::new()
+        .run(&["run", "--memory", "lots", "linux"])
+        .usage_error();
+    Sandbox::new()
+        .run(&["run", "--cpus", "0", "linux"])
+        .usage_error();
+}
+
+#[cfg(unix)]
+#[test]
 fn exec_passes_the_guest_exit_code_through() {
     let sandbox = Sandbox::new();
     let golden = sandbox.write_file(".local/share/vitro/golden/linux.qcow2", &[0u8; 1024]);
