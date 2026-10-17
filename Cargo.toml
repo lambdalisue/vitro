@@ -28,6 +28,7 @@ include = [
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.6.11"
 des = "0.9"
 fatfs = "0.3.6"
 fs4 = { version = "0.9", features = ["sync"] }

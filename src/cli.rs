@@ -182,6 +182,12 @@ pub enum Command {
     /// Check everything `run` and `build` depend on
     Doctor,
 
+    /// Print a completion script for a shell
+    ///
+    /// For example `vitro completions fish > ~/.config/fish/completions/vitro.fish`,
+    /// or `source <(vitro completions bash)` in `.bashrc`.
+    Completions { shell: clap_complete::Shell },
+
     /// Show what is running and what to do next
     Status {
         name: Option<String>,
