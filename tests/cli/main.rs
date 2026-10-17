@@ -934,6 +934,43 @@ fn test_reports_a_failed_sync_as_that_images_verdict_instead_of_aborting() {
     assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
 }
 
+#[cfg(unix)]
+#[test]
+fn test_runs_an_images_own_command_with_its_own_variables() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin("ssh", 0);
+    sandbox.write_file(
+        "app/vitro.toml",
+        b"images = [\"linux\"]\ncommand = [\"make\"]\nsync = false\n\
+          [image.linux]\ncommand = [\"make\", \"linux-check\"]\nenv = { ONLY = \"linux\" }\n",
+    );
+
+    sandbox
+        .run_in(&sandbox.home().join("app"), &["test"])
+        .success();
+
+    let last = sandbox.calls("ssh").pop().unwrap();
+    assert!(last.ends_with("-- ONLY=linux make linux-check"), "{last}");
+}
+
+#[test]
+fn test_refuses_an_image_with_no_command_before_starting_anything() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(
+        "[images.linux]\ngolden = \"/srv/linux.qcow2\"\nssh_user = \"dev\"\n\
+         [images.windows]\ngolden = \"/srv/windows.qcow2\"\nssh_user = \"dev\"\n",
+    );
+    sandbox.write_file(
+        "app/vitro.toml",
+        b"images = [\"linux\"]\n[image.linux]\ncommand = [\"make\"]\n",
+    );
+
+    sandbox
+        .run_in(&sandbox.home().join("app"), &["test", "windows"])
+        .failure()
+        .stderr_contains("no command for windows");
+}
+
 #[test]
 fn test_refuses_an_unknown_image_before_starting_anything() {
     let sandbox = Sandbox::new();

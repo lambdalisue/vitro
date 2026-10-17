@@ -40,17 +40,25 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
             project.dir.join(crate::PROJECT_FILE).display()
         );
     }
-    // Every name checked before the first VM starts, so a typo in the last
-    // one does not surface after the first has run for twenty minutes.
+    // Every image checked before the first VM starts, so a typo or a missing
+    // command for the last one does not surface after the first has run for
+    // twenty minutes.
+    let mut commands = Vec::new();
     for image in &images {
         config.image(image)?;
+        let Some(command) = project.command_for(image) else {
+            bail!(
+                "{} has no command for {image}: set `command`, or `command` in [image.{image}]",
+                project.dir.join(crate::PROJECT_FILE).display()
+            );
+        };
+        let mut command = command.to_vec();
+        command.extend(options.extra.iter().cloned());
+        commands.push(command);
     }
 
-    let mut command = project.command.clone();
-    command.extend(options.extra);
-
     let mut results = Vec::new();
-    for image in &images {
+    for (image, command) in images.iter().zip(commands) {
         eprintln!("vitro: testing on {image}");
         let outcome = match run::run(
             paths,
@@ -72,11 +80,11 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                 config,
                 &record.name,
                 run::Then {
-                    command: command.clone(),
+                    command,
                     script: None,
                     sync: project.sync.clone(),
                     prelude: ssh::Prelude {
-                        env: project.env.clone(),
+                        env: project.env_for(image),
                         ..ssh::Prelude::default()
                     },
                     remove: true,

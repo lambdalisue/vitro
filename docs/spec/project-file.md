@@ -16,7 +16,8 @@ file are relative to the directory holding it.
 # [images.*] key from the machine's own config.toml.
 images = ["windows", "macos"]
 
-# Required: the command, one word per element, as `vitro exec` takes it.
+# The command, one word per element, as `vitro exec` takes it. Every image
+# runs it unless its own section below names another.
 command = ["cargo", "test", "--workspace"]
 
 # The directory sent to the guest before the command, which then runs inside
@@ -31,25 +32,34 @@ memory = "16G"
 # Variables set for the command.
 [env]
 RUST_BACKTRACE = "1"
+
+# What differs for one image, by its key: its own command, which replaces the
+# shared one, and variables laid over the shared ones.
+[image.windows]
+command = ["cargo", "test", "--workspace", "--features", "tsf"]
+env = { RUST_LOG = "debug" }
 ```
 
 | Key | Type | Default |
 | --- | --- | --- |
 | `images` | array of strings | none; images must then be named on the command line |
-| `command` | non-empty array of strings | required |
+| `command` | non-empty array of strings | none; then every image needs its own |
 | `sync` | boolean or path | `true` |
 | `cpus` | integer, at least 1 | the image's |
 | `memory` | size such as `16G` or `512M` | the image's |
 | `env` | table of strings | none |
+| `image.<key>.command` | non-empty array of strings | the shared `command` |
+| `image.<key>.env` | table of strings | none |
 
-A key vitro does not know is an error, as is a variable name that is not
-letters, digits and `_`, not starting with a digit.
+Every image in `images` has to end up with a command, from its own section or
+the shared one. A key vitro does not know is an error, as is a variable name
+that is not letters, digits and `_`, not starting with a digit.
 
 ## What `vitro test` does
 
 `vitro test [<image>…] [-- <args>…]` runs on the images named, or on the
 project's `images` when none is. Every image is checked against the
-configuration before any VM starts.
+configuration, and for a command, before any VM starts.
 
 For each image in turn, it does what `vitro run --rm` does with the project's
 settings: start a fresh VM, send the project, run the command with `<args>`
