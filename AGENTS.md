@@ -42,6 +42,7 @@ Linux, macOS and Windows.
 | `src/commands/` | one module per subcommand |
 | `tests/cli/` | end-to-end tests that drive the binary against fake QEMU and SSH binaries |
 | `docs/` | concept, ADRs, specs, and the user guides (`configuration`, `guests`, `internals`, `troubleshooting`) |
+| `packaging/` | what the release workflow renders for package managers |
 | `spikes/` | untracked experiments; never built or shipped |
 
 ## Language
@@ -89,6 +90,7 @@ Commits before this convention was adopted use Conventional Commits
 | `spec` | `docs/spec/` |
 | `ci` | `.github/` |
 | `nix` | `flake.nix`, `flake.lock` |
+| `packaging` | `packaging/` |
 | `repo` | `.gitignore`, `.gitattributes`, `.envrc.sample` |
 | `deps` | dependency updates |
 

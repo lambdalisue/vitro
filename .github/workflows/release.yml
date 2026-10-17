@@ -1,7 +1,7 @@
 name: Release
 
 # Publishing a GitHub Release starts this: write the notes, publish, and the
-# binaries and the crates.io release follow. The release exists before its
+# binaries, the Homebrew tap and the crates.io release follow. The release exists before its
 # assets do — expect a few minutes with the notes up and nothing attached.
 #
 # The tag is the only record of the version. `version` in Cargo.toml and
@@ -122,6 +122,77 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: gh release upload "$TAG" dist/* --clobber
+
+  # Point the tap at the archives this release just attached, so the URLs in
+  # the formula resolve the moment it lands. A pre-release is left out: `brew
+  # upgrade` would otherwise move everyone onto it.
+  homebrew:
+    needs: attach
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The checksums the attach job computed from the uploaded bytes, rather
+      # than recomputed here from a second copy.
+      - name: Download the checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release download "$TAG" --pattern '*.sha256' --dir dist
+      # HOMEBREW_TAP_TOKEN is a token with contents:write on the tap;
+      # GITHUB_TOKEN cannot push to another repository. persist-credentials
+      # stays false because the verification below runs the release binary,
+      # which must not find a credential that can rewrite the tap.
+      - uses: actions/checkout@v7
+        with:
+          repository: lambdalisue/homebrew-vitro
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+          path: tap
+      - name: Render the formula
+        run: |
+          mkdir -p tap/Formula
+          perl packaging/homebrew/render.pl "${TAG#v}" dist \
+            < packaging/homebrew/vitro.rb > tap/Formula/vitro.rb
+          cat tap/Formula/vitro.rb
+      # Installed before it is published: a URL typo, a checksum paired with
+      # the wrong target or a binary that will not start would otherwise reach
+      # users first. Only the Linux x86_64 archive is fetched; the others come
+      # from the same template and the same checksum files. QEMU is skipped
+      # because the formula's own code is what is under test, not QEMU's.
+      - name: Verify the formula
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_ANALYTICS: 1
+        run: |
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          tap="$(brew --repository)/Library/Taps/lambdalisue/homebrew-vitro"
+          mkdir -p "$(dirname "$tap")"
+          ln -s "$PWD/tap" "$tap"
+          brew install --ignore-dependencies lambdalisue/vitro/vitro
+          brew test lambdalisue/vitro/vitro
+      - name: Commit and push
+        working-directory: tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/vitro.rb
+          if git diff --staged --quiet; then
+            echo "formula already up to date"
+            exit 0
+          fi
+          git commit -m "vitro ${TAG#v}"
+          # The helper reads TAP_TOKEN when git runs it, so the token reaches
+          # neither argv nor .git/config. The single quotes are what keep this
+          # shell from expanding it first.
+          # shellcheck disable=SC2016
+          git -c credential.helper= \
+              -c credential.helper='!f() { echo username=x-access-token; echo "password=$TAP_TOKEN"; }; f' \
+              push origin HEAD:main
 
   # Last, and only once every target has proved it builds: a published version
   # can be yanked but never replaced.

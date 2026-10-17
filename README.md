@@ -55,7 +55,23 @@ Windows and macOS guests, which is where the gap was.
 ## Try it
 
 Two things to install — vitro itself, and QEMU, which brings the guest firmware
-with it:
+with it. With Homebrew, on macOS or Linux, one command does both and adds the
+shell completions:
+
+```console
+$ brew install lambdalisue/vitro/vitro
+```
+
+With Nix, the flake installs vitro with its shell completions; QEMU comes from
+wherever you get it. Main's builds are kept in a Cachix cache, so with it added
+this is a download rather than a Rust build:
+
+```console
+$ cachix use vitro                                 # optional: prebuilt binaries
+$ nix profile install github:lambdalisue/vitro
+```
+
+Or from crates.io, with QEMU installed separately:
 
 ```console
 $ cargo install vitro
@@ -63,14 +79,8 @@ $ brew install qemu                        # macOS
 $ sudo apt install qemu-system qemu-utils  # Debian, Ubuntu
 ```
 
-With Nix, the flake installs vitro with its shell completions. Main's builds
-are kept in a Cachix cache, so with it added this is a download rather than a
-Rust build:
-
-```console
-$ cachix use vitro                                 # optional: prebuilt binaries
-$ nix profile install github:lambdalisue/vitro
-```
+`vitro completions <shell>` prints a completion script for a shell the
+packages above did not set up.
 
 Then let vitro do the rest:
 
