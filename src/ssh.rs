@@ -113,6 +113,7 @@ pub struct SshOptions {
     /// Ports to carry. A non-empty list also means `-N`: the connection exists
     /// only for the forwards, and ends when the user interrupts it.
     pub forwards: Vec<Forward>,
+    pub prelude: Prelude,
 }
 
 impl Default for SshOptions {
@@ -124,8 +125,40 @@ impl Default for SshOptions {
             command: Vec::new(),
             quoting: Quoting::Posix,
             forwards: Vec::new(),
+            prelude: Prelude::default(),
         }
     }
+}
+
+/// Where the command runs and what it finds in its environment, written in
+/// front of it in the guest shell's own syntax.
+///
+/// `Quoting::Raw` is only ever chosen for a Windows guest, whose shell is
+/// PowerShell, so that is the syntax it gets.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Prelude {
+    pub cwd: Option<String>,
+    pub env: Vec<(String, String)>,
+}
+
+/// Read `NAME=VALUE`.
+///
+/// The name has to be one both a POSIX shell and PowerShell take as a bare
+/// assignment target: it is written into the command unquoted, so anything
+/// else would be a quoting hole rather than a variable.
+pub fn parse_env(text: &str) -> Result<(String, String)> {
+    let Some((name, value)) = text.split_once('=') else {
+        bail!("{text:?} is not NAME=VALUE");
+    };
+    let valid = name
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !valid {
+        bail!("{name:?} is not a variable name: use letters, digits and `_`, not starting with a digit");
+    }
+    Ok((name.to_string(), value.to_string()))
 }
 
 pub fn ssh_args(target: &SshTarget, options: &SshOptions) -> Vec<OsString> {
@@ -176,9 +209,10 @@ pub fn ssh_args(target: &SshTarget, options: &SshOptions) -> Vec<OsString> {
 
     if !options.command.is_empty() {
         args.push(OsString::from("--"));
-        args.push(OsString::from(shell_join(
+        args.push(OsString::from(compose(
             &options.command,
             options.quoting,
+            &options.prelude,
         )));
     }
 
@@ -200,6 +234,43 @@ fn shell_join(command: &[String], quoting: Quoting) -> String {
             .collect::<Vec<_>>()
             .join(" "),
     }
+}
+
+fn compose(command: &[String], quoting: Quoting, prelude: &Prelude) -> String {
+    let command = shell_join(command, quoting);
+    match quoting {
+        Quoting::Posix => {
+            let mut line = String::new();
+            if let Some(cwd) = &prelude.cwd {
+                line.push_str(&format!("cd {} && ", quote(cwd)));
+            }
+            // `NAME=value cmd` rather than `export`: the variables are for this
+            // command, and the form needs no second statement.
+            for (name, value) in &prelude.env {
+                line.push_str(&format!("{name}={} ", quote(value)));
+            }
+            line + &command
+        }
+        Quoting::Raw => {
+            let mut line = String::new();
+            if let Some(cwd) = &prelude.cwd {
+                line.push_str(&format!(
+                    "Set-Location -LiteralPath {} -ErrorAction Stop; ",
+                    powershell_literal(cwd)
+                ));
+            }
+            for (name, value) in &prelude.env {
+                line.push_str(&format!("$env:{name}={}; ", powershell_literal(value)));
+            }
+            line + &command
+        }
+    }
+}
+
+/// A single-quoted PowerShell string, in which nothing expands and a quote is
+/// escaped by doubling it.
+pub(crate) fn powershell_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn quote(part: &str) -> String {
@@ -526,6 +597,68 @@ mod tests {
         });
 
         assert!(line.ends_with("-- exit 42"), "{line}");
+    }
+
+    fn prelude() -> Prelude {
+        Prelude {
+            cwd: Some("my src".into()),
+            env: vec![
+                ("RUST_BACKTRACE".into(), "1".into()),
+                ("GREETING".into(), "it's here".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn a_posix_guest_changes_directory_and_sets_variables_in_its_own_syntax() {
+        let line = line(&SshOptions {
+            command: vec!["cargo".into(), "test".into()],
+            prelude: prelude(),
+            ..SshOptions::default()
+        });
+
+        assert!(
+            line.ends_with(
+                r"-- cd 'my src' && RUST_BACKTRACE=1 GREETING='it'\''s here' cargo test"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_powershell_guest_changes_directory_and_sets_variables_in_its_own_syntax() {
+        // A failed Set-Location has to stop the line, or the command runs in
+        // the home directory and reports on the wrong tree.
+        let line = line(&SshOptions {
+            command: vec!["cargo".into(), "test".into()],
+            quoting: Quoting::Raw,
+            prelude: prelude(),
+            ..SshOptions::default()
+        });
+
+        assert!(
+            line.ends_with(
+                "-- Set-Location -LiteralPath 'my src' -ErrorAction Stop; \
+                 $env:RUST_BACKTRACE='1'; $env:GREETING='it''s here'; cargo test"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_variable_is_given_as_name_equals_value() {
+        assert_eq!(
+            parse_env("A_1=x=y").unwrap(),
+            ("A_1".to_string(), "x=y".to_string())
+        );
+        assert_eq!(parse_env("EMPTY=").unwrap(), ("EMPTY".into(), "".into()));
+    }
+
+    #[test]
+    fn a_variable_name_neither_shell_could_assign_is_refused() {
+        for bad in ["NOVALUE", "=x", "1A=x", "A-B=x", "A B=x", "$A=x"] {
+            assert!(parse_env(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -15,6 +15,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::keys::Chord;
+use crate::ssh::powershell_literal;
 use crate::{
     commands::exec, golden, lume, process, qmp, signals, ssh, tools, vnc, Backend, Config, Guest,
     Paths, Store, SysinfoProbe, VmRecord,
@@ -307,11 +308,6 @@ fn launch_command(guest: Guest, user: &str, command: &[String]) -> Vec<String> {
             )]
         }
     }
-}
-
-/// A single-quoted PowerShell string. Doubling is how a quote is escaped.
-fn powershell_literal(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
 }
 
 /// Quote for the guest's shell, the same way vitro quotes for `exec`.

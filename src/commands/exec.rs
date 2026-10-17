@@ -10,7 +10,13 @@ use crate::{process, ssh, tools, Config, Paths, Store, SysinfoProbe, VmRecord};
 
 pub const KNOWN_HOSTS: &str = "known_hosts";
 
-pub fn exec(paths: &Paths, config: &Config, name: &str, command: &[String]) -> Result<i32> {
+pub fn exec(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    command: &[String],
+    prelude: ssh::Prelude,
+) -> Result<i32> {
     let (record, target, ssh_binary) = prepare(paths, config, name)?;
 
     ssh::run_passthrough(
@@ -30,6 +36,7 @@ pub fn exec(paths: &Paths, config: &Config, name: &str, command: &[String]) -> R
             command: command.to_vec(),
             quoting: record.guest.into(),
             forwards: Vec::new(),
+            prelude,
         },
     )
 }
@@ -48,6 +55,7 @@ pub fn interactive(paths: &Paths, config: &Config, name: &str) -> Result<i32> {
             command: Vec::new(),
             quoting: ssh::Quoting::Posix,
             forwards: Vec::new(),
+            prelude: ssh::Prelude::default(),
         },
     )
 }
