@@ -140,3 +140,6 @@ command naming `git`.
 - On a macOS guest, do not script windows with `osascript` and System Events:
   it is refused for Accessibility (-1719). Take a `screenshot`, then `drag`
   the window's corner to resize it or its title bar to move it.
+- On a macOS guest, `scroll … up` moves content the other way from a Linux or
+  Windows guest: natural scrolling is on. Take a screenshot to see which way
+  it went rather than assuming.
