@@ -117,6 +117,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
             sync,
             cwd,
             env,
+            script,
             command,
             name,
             cpus,
@@ -124,6 +125,11 @@ fn dispatch(cli: Cli) -> Result<i32> {
             golden,
         }) => {
             let prelude = parse_prelude(cwd, &env)?;
+            if let Some(path) = &script {
+                // Before the VM boots: a Windows boot is minutes spent on a
+                // script that was never going to run.
+                vitro::script::check(path, config.image(&image)?.guest)?;
+            }
             let record = run::run(
                 &paths,
                 &config,
@@ -139,7 +145,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                 "{} is up: ssh {}@{} -p {}",
                 record.name, record.ssh_user, record.ssh_host, record.ssh_port
             );
-            if command.is_empty() && !rm {
+            if command.is_empty() && script.is_none() && !rm {
                 println!("{up}");
                 return Ok(0);
             }
@@ -151,6 +157,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                 &record.name,
                 run::Then {
                     command,
+                    script,
                     sync,
                     prelude,
                     remove: rm,

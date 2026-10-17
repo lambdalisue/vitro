@@ -50,6 +50,9 @@ pub enum Command {
     /// With a command after `--`, run it in the new VM and exit with its exit
     /// code. With `--rm`, destroy the VM afterwards, whatever happened; with
     /// `--rm` and no command, open a shell and destroy the VM when it closes.
+    // A script takes the words after `--` as its arguments, so the two belong
+    // to one group that the command-only options can require.
+    #[command(group(clap::ArgGroup::new("payload").multiple(true)))]
     Run {
         /// An `[images.*]` key from the configuration
         image: String,
@@ -57,16 +60,20 @@ pub enum Command {
         #[arg(long)]
         rm: bool,
         /// Copy this host directory into the guest and run the command in it
-        #[arg(long, value_name = "DIR", requires = "command")]
+        #[arg(long, value_name = "DIR", requires = "payload")]
         sync: Option<PathBuf>,
         /// Run the command in this guest directory
-        #[arg(long, value_name = "DIR", requires = "command")]
+        #[arg(long, value_name = "DIR", requires = "payload")]
         cwd: Option<String>,
         /// Set a variable for the command; may be repeated
-        #[arg(long = "env", value_name = "NAME=VALUE", requires = "command")]
+        #[arg(long = "env", value_name = "NAME=VALUE", requires = "payload")]
         env: Vec<String>,
+        /// Run this host script in the new VM instead of a command; the words
+        /// after `--` are its arguments
+        #[arg(long, value_name = "FILE", group = "payload")]
+        script: Option<PathBuf>,
         /// The command to run, after `--`
-        #[arg(last = true, value_name = "COMMAND")]
+        #[arg(last = true, value_name = "COMMAND", group = "payload")]
         command: Vec<String>,
         /// Name the VM instead of generating one
         #[arg(long)]
@@ -319,6 +326,32 @@ mod tests {
         assert_eq!(image, "windows");
         assert!(rm);
         assert_eq!(command, ["cargo", "test", "--", "-q"]);
+    }
+
+    #[test]
+    fn run_takes_a_script_and_hands_it_the_words_after_the_separator() {
+        let cli = Cli::try_parse_from([
+            "vitro",
+            "run",
+            "--rm",
+            "--sync",
+            ".",
+            "--script",
+            "setup.ps1",
+            "windows",
+            "--",
+            "-Fast",
+        ])
+        .unwrap();
+
+        let Some(Command::Run {
+            script, command, ..
+        }) = cli.command
+        else {
+            panic!("expected run");
+        };
+        assert_eq!(script.as_deref(), Some(std::path::Path::new("setup.ps1")));
+        assert_eq!(command, ["-Fast"]);
     }
 
     #[test]

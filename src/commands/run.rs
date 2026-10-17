@@ -261,8 +261,11 @@ fn run_lume(
 
 /// What to do with a VM once `run` has started it.
 pub struct Then {
-    /// Empty for an interactive shell.
+    /// Empty for an interactive shell, unless there is a script; then these
+    /// are its arguments.
     pub command: Vec<String>,
+    /// A host script to run instead of the command.
+    pub script: Option<PathBuf>,
     pub sync: Option<PathBuf>,
     pub prelude: ssh::Prelude,
     /// Destroy the VM afterwards, whatever happened.
@@ -277,18 +280,22 @@ pub fn then(paths: &Paths, config: &Config, name: &str, then: Then) -> Result<i3
         config,
         name: name.to_string(),
     });
-    if then.command.is_empty() {
-        exec::interactive(paths, config, name)
-    } else {
-        exec::exec(
-            paths,
-            config,
-            name,
-            exec::Payload::Command(&then.command),
-            then.sync.as_deref(),
-            then.prelude,
-        )
-    }
+    let payload = match &then.script {
+        Some(path) => exec::Payload::Script {
+            path,
+            args: &then.command,
+        },
+        None if then.command.is_empty() => return exec::interactive(paths, config, name),
+        None => exec::Payload::Command(&then.command),
+    };
+    exec::exec(
+        paths,
+        config,
+        name,
+        payload,
+        then.sync.as_deref(),
+        then.prelude,
+    )
 }
 
 /// Destroys a VM when dropped, so a failed sync, a failed command and an
