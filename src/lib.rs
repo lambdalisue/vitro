@@ -23,6 +23,7 @@ pub mod qmp;
 pub mod seed;
 pub mod signals;
 pub mod ssh;
+pub mod sync;
 pub mod tools;
 pub mod unattend;
 pub mod vnc;

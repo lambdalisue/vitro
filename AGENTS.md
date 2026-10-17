@@ -80,6 +80,7 @@ Commits before this convention was adopted use Conventional Commits
 | `qemu` | `src/qemu.rs`, `src/qmp.rs` |
 | `lume` | `src/lume.rs` |
 | `ssh` | `src/ssh.rs` |
+| `sync` | `src/sync.rs` |
 | `image` | `src/image.rs`, `src/golden.rs`, `src/iso.rs`, `src/media.rs`, `src/seed.rs`, `src/unattend.rs` |
 | `test` | `tests/` |
 | `docs` | `README.md`, `docs/*.md` |
