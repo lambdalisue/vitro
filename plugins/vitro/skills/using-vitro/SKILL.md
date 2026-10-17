@@ -56,13 +56,51 @@ $ vitro destroy windows
 - A VM can be named by its full name, by its image, or by a unique prefix.
 - While only one VM is running, the name can be left out:
   `vitro exec cargo test`.
-- `--cwd` and `--env NAME=VALUE` are written in the guest shell's syntax. On a
-  Windows guest the command itself runs in PowerShell, so write it in
-  PowerShell (`Get-ChildItem`, `$env:PATH`), not in POSIX sh. There, `exit`
-  straight after a cmdlet that prints a table discards that table: write
-  `Get-Location | Out-String; exit 7`, not `Get-Location; exit 7`.
+- `--cwd` and `--env NAME=VALUE` are written in the guest shell's syntax.
 - Always destroy what you started. `vitro status` flags a VM that has been up
   for more than a day.
+
+## Windows guests
+
+- The command runs in **Windows PowerShell 5.1**, not cmd and not sh. Write
+  PowerShell (`Get-ChildItem`, `$env:PATH`). It has no `&&` or `||`: chain
+  with `;` and check `$LASTEXITCODE`.
+- `exit` straight after a cmdlet that prints a table discards the table: write
+  `Get-Location | Out-String; exit 7`, not `Get-Location; exit 7`.
+- Each `exec` sees PATH as the registry holds it now, so a tool you installed
+  earlier in the session is found as it is. Do not prefix `$env:PATH` by hand.
+- `launch` starts a GUI program on the logged-in desktop, and `screenshot`
+  shows whether it appeared; `exec` runs outside that desktop.
+
+## Anything longer than one line: `--script`
+
+Pipelines, loops, hashtables and multi-line logic do not survive being passed
+as words through `exec`. Write them to a file on the host and run it:
+
+```console
+$ vitro exec --script ./collect.ps1 windows -Since 1h   # .ps1/.cmd/.bat on Windows
+$ vitro exec --script ./setup.sh linux --fast           # any file on Unix
+```
+
+vitro copies the script in, runs it with the arguments after the VM, removes
+it, and exits with its code. Do not hand-roll `vitro cp` + `powershell -File`.
+It is also the way round a sandbox that refuses `vitro exec <vm> sh -c …` or a
+command naming `git`.
+
+## Setting a guest up once
+
+- A guest starts with nothing but the OS. Before installing a toolchain by
+  hand, check whether the image already has it (`vitro exec windows cargo
+  --version`).
+- vitro ships provision scripts for native builds in its repository's
+  `examples/provision/` (Git, a C toolchain, Rust; on Windows also the MSVC
+  build tools and LLVM). They run on a live VM through `--script` and leave
+  installed tools alone.
+- Setup that took more than a few minutes is worth keeping: `vitro promote
+  <vm> --as <name>` turns the VM into a golden image, and `vitro run --golden
+  <name> <image>` starts from it later. Ask the user before promoting.
+- Builds that take minutes: run the `vitro exec` in a background task and wait
+  for it, rather than polling the guest with `sleep`.
 
 ## Things to avoid
 
