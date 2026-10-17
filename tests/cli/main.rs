@@ -803,6 +803,23 @@ fn a_completion_script_is_printed_for_every_supported_shell() {
 }
 
 #[test]
+fn completions_need_neither_a_home_nor_a_readable_configuration() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("this is not toml");
+
+    sandbox
+        .run(&["completions", "fish"])
+        .success()
+        .stdout_contains("vitro");
+    sandbox
+        .run_with_env(
+            &["completions", "fish"],
+            &[("HOME", "/nonexistent"), ("USERPROFILE", "")],
+        )
+        .success();
+}
+
+#[test]
 fn completions_for_an_unknown_shell_is_a_usage_error() {
     Sandbox::new().run(&["completions", "tcsh"]).usage_error();
 }
