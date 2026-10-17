@@ -1,13 +1,15 @@
 name: Release
 
 # Publishing a GitHub Release starts this: write the notes, publish, and the
-# binaries, the Homebrew tap and the crates.io release follow. The release exists before its
-# assets do — expect a few minutes with the notes up and nothing attached.
+# binaries, the Homebrew tap, the Nix cache and the crates.io release follow.
+# The release exists before its assets do — expect a few minutes with the
+# notes up and nothing attached.
 #
 # The tag is the only record of the version. `version` in Cargo.toml and
-# Cargo.lock is a placeholder that each job stamps from the tag before it
+# Cargo.lock is a placeholder that each cargo job stamps from the tag before it
 # builds, so `--locked` still holds the build to the versions the tests ran
-# against.
+# against. The flake stamps its build the same way, from VERSION, which GitHub
+# fills in with the tag when it serves the tagged source.
 on:
   release:
     types: [published]
@@ -196,6 +198,19 @@ jobs:
           git -c credential.helper= \
               -c credential.helper='!f() { echo username=x-access-token; echo "password=$TAP_TOKEN"; }; f' \
               push origin HEAD:main
+
+  # The flake as `nix profile install github:lambdalisue/vitro/vX.Y.Z` fetches
+  # it: from the archive GitHub serves, whose VERSION holds the tag. Building
+  # that, not the checkout, both proves the tag reaches `--version` and puts
+  # the exact build such an install looks up into the Cachix cache.
+  nix:
+    needs: test
+    uses: lambdalisue/nix-github-release/.github/workflows/build.yml@v0.1.0
+    with:
+      ref: ${{ github.event.release.tag_name }}
+      cachix-cache: ${{ vars.CACHIX_CACHE }}
+    secrets:
+      cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
   # Last, and only once every target has proved it builds: a published version
   # can be yanked but never replaced.

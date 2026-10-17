@@ -10,21 +10,12 @@ use clap::{Parser, Subcommand};
 
 use crate::ByteSize;
 
-/// What `--version` prints.
-///
-/// Cargo.toml holds 0.0.0 and the release workflow stamps the tag into it, so
-/// a release build reports the tag. A build from the flake cannot see a tag,
-/// only its commit, so it names that through `VITRO_VERSION` instead of
-/// claiming 0.0.0.
-pub const VERSION: &str = match option_env!("VITRO_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
-
 #[derive(Debug, Parser)]
 #[command(
     name = "vitro",
-    version = VERSION,
+    // Cargo.toml holds 0.0.0; the release workflow and the flake both stamp
+    // the version into it before building.
+    version,
     about = "Disposable development VMs driven from a CLI",
     // `vitro` with no arguments reports status rather than printing usage.
     args_conflicts_with_subcommands = true
@@ -310,16 +301,6 @@ mod tests {
     #[test]
     fn the_command_line_definition_is_valid() {
         Cli::command().debug_assert();
-    }
-
-    #[test]
-    fn the_version_is_the_crates_unless_the_build_names_its_own() {
-        // Release builds stamp Cargo.toml; a Nix build sets VITRO_VERSION,
-        // since its Cargo.toml still says 0.0.0.
-        let expected = option_env!("VITRO_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-
-        assert_eq!(VERSION, expected);
-        assert_eq!(Cli::command().get_version(), Some(expected));
     }
 
     #[test]

@@ -68,7 +68,8 @@ jobs:
           CI: "1"
 
   # The package `nix profile install github:lambdalisue/vitro` installs, built
-  # on every system the flake lists, so it cannot break unnoticed.
+  # on every system the flake lists from the archive GitHub serves — the
+  # source such an install fetches — so it cannot break unnoticed.
   #
   # Builds on main are pushed to the Cachix cache named by the CACHIX_CACHE
   # repository variable, so an install downloads instead of compiling. Pull
@@ -76,23 +77,8 @@ jobs:
   # pull request's build never reaches what users download. Until the variable
   # is set the package is still built, just not cached.
   nix:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@v17
-        if: vars.CACHIX_CACHE != ''
-        with:
-          name: ${{ vars.CACHIX_CACHE }}
-          authToken: ${{ github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN || '' }}
-      - run: nix build --print-build-logs .#vitro
-      - run: ./result/bin/vitro --version
+    uses: lambdalisue/nix-github-release/.github/workflows/build.yml@v0.1.0
+    with:
+      cachix-cache: ${{ vars.CACHIX_CACHE }}
+    secrets:
+      cachix-auth-token: ${{ github.ref == 'refs/heads/main' && secrets.CACHIX_AUTH_TOKEN || '' }}

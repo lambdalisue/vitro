@@ -70,12 +70,13 @@ $ brew install lambdalisue/vitro/vitro
 ```
 
 With Nix, the flake installs vitro with its shell completions; QEMU comes from
-wherever you get it. Main's builds are kept in the `vitro` Cachix cache, which
-the flake offers on first use — accept it, or run `cachix use vitro` once, and
-this is a download rather than a Rust build:
+wherever you get it. Main's and every release's builds are kept in the `vitro`
+Cachix cache, which the flake offers on first use — accept it, or run
+`cachix use vitro` once, and this is a download rather than a Rust build:
 
 ```console
-$ nix profile install github:lambdalisue/vitro
+$ nix profile install github:lambdalisue/vitro          # main
+$ nix profile install github:lambdalisue/vitro/vX.Y.Z   # a release
 ```
 
 Or from crates.io, with QEMU installed separately:
@@ -392,9 +393,12 @@ $ just release-check          # what crates.io will refuse, found locally
 
 Then write the notes and publish a release tagged `vX.Y.Z` on GitHub. The tag
 is the only record of the version — `Cargo.toml` holds `0.0.0` and the workflow
-stamps the tag into it. From there it builds a binary on a native runner for
-each of the six supported targets, attaches them to the release with their
-checksums, and publishes to crates.io once every target has built — because
+stamps the tag into it. The flake stamps it too, without being told the tag:
+`VERSION` is marked `export-subst`, so the archive GitHub serves for the tag
+carries the tag in it. From there the workflow builds a binary on a
+native runner for each of the six supported targets, attaches them to the
+release with their checksums, builds the flake from the tag into the Cachix
+cache, and publishes to crates.io once every target has built — because
 that is the one step that cannot be undone. It authenticates with crates.io
 through trusted publishing, so there is no registry token in the repository's
 secrets.

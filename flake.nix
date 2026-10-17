@@ -15,6 +15,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     crane.url = "github:ipetkov/crane";
+    nix-github-release = {
+      url = "github:lambdalisue/nix-github-release/v0.1.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -23,6 +27,7 @@
       nixpkgs,
       rust-overlay,
       crane,
+      nix-github-release,
       ...
     }:
     let
@@ -47,17 +52,14 @@
           inherit (pkgs) lib;
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain (_: rust);
-          package = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package;
-          # The source carries no tags, so a build names the commit it is made from.
-          rev = self.shortRev or self.dirtyShortRev or "unknown";
-          date =
-            let
-              d = self.lastModifiedDate or "19700101000000";
-            in
-            "${lib.substring 0 4 d}-${lib.substring 4 2 d}-${lib.substring 6 2 d}";
+          # The tag this flake was fetched at, from VERSION; see
+          # github:lambdalisue/nix-github-release.
+          version = nix-github-release.lib.version { inherit self; };
           build = {
             pname = "vitro";
-            version = "${package.version}-${rev}";
+            # Cargo.toml's placeholder, so the dependency layer stays cached
+            # across releases; the package itself is stamped with the version.
+            version = "0.0.0";
             src = lib.fileset.toSource {
               root = ./.;
               fileset = lib.fileset.unions [
@@ -72,29 +74,27 @@
             doCheck = false;
           };
           vitro = craneLib.buildPackage (
-            build
-            // {
-              cargoArtifacts = craneLib.buildDepsOnly build;
-              # What `vitro --version` prints instead of Cargo.toml's 0.0.0.
-              # Only here, not in `build`, so the dependency layer stays cached
-              # across commits.
-              VITRO_VERSION = "git-${rev} (${date})";
-              nativeBuildInputs = [ pkgs.installShellFiles ];
-              # The scripts come from the binary itself, so they can only be
-              # made where it runs.
-              postInstall = lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
-                installShellCompletion --cmd vitro \
-                  --bash <($out/bin/vitro completions bash) \
-                  --fish <($out/bin/vitro completions fish) \
-                  --zsh <($out/bin/vitro completions zsh)
-              '';
-              meta = {
-                description = "Disposable development VMs driven from a CLI";
-                homepage = "https://github.com/lambdalisue/vitro";
-                license = lib.licenses.mit;
-                mainProgram = "vitro";
-              };
-            }
+            nix-github-release.lib.stampCargo { inherit pkgs version; } (
+              build
+              // {
+                cargoArtifacts = craneLib.buildDepsOnly build;
+                nativeBuildInputs = [ pkgs.installShellFiles ];
+                # The scripts come from the binary itself, so they can only be
+                # made where it runs.
+                postInstall = lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+                  installShellCompletion --cmd vitro \
+                    --bash <($out/bin/vitro completions bash) \
+                    --fish <($out/bin/vitro completions fish) \
+                    --zsh <($out/bin/vitro completions zsh)
+                '';
+                meta = {
+                  description = "Disposable development VMs driven from a CLI";
+                  homepage = "https://github.com/lambdalisue/vitro";
+                  license = lib.licenses.mit;
+                  mainProgram = "vitro";
+                };
+              }
+            )
           );
         in
         {
