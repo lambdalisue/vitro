@@ -43,6 +43,7 @@ Linux, macOS and Windows.
 | `tests/cli/` | end-to-end tests that drive the binary against fake QEMU and SSH binaries |
 | `docs/` | concept, ADRs, specs, and the user guides (`configuration`, `guests`, `internals`, `troubleshooting`) |
 | `packaging/` | what the release workflow renders for package managers |
+| `examples/` | scripts users copy, such as `provision` scripts; `docs/guests.md` says how far each has run |
 | `.claude-plugin/`, `plugins/` | the Claude Code marketplace and its plugin; its skill describes the CLI, so change it with the CLI |
 | `spikes/` | untracked experiments; never built or shipped |
 
@@ -92,6 +93,7 @@ Commits before this convention was adopted use Conventional Commits
 | `spec` | `docs/spec/` |
 | `ci` | `.github/` |
 | `nix` | `flake.nix`, `flake.lock` |
+| `examples` | `examples/` |
 | `packaging` | `packaging/` |
 | `plugin` | `.claude-plugin/`, `plugins/` |
 | `repo` | `.gitignore`, `.gitattributes`, `.envrc.sample` |
