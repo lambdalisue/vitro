@@ -186,6 +186,7 @@ toolchain is spent once.
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
+| `test [<image>…]`        | Run the project's `vitro.toml` command on each image |
 | `destroy <vm>` / `--all` | Stop a VM and delete its overlay                     |
 | `promote <vm>`           | Turn a running VM into a new golden image            |
 | `ls`                     | List VMs and golden images (`--json`, `--prune`)     |
@@ -226,6 +227,31 @@ command inside it. Only what `.gitignore` keeps is sent, so `target/` and
 ```console
 $ vitro exec --sync . windows cargo test
 ```
+
+## Testing a project
+
+A project can say once how it is tested, in a `vitro.toml` at its root:
+
+```toml
+images  = ["windows", "macos"]
+command = ["cargo", "test"]
+
+[env]
+RUST_BACKTRACE = "1"
+```
+
+`vitro test`, run anywhere inside the project, then gives each image a fresh
+VM, copies the project in, runs the command and destroys the VM, and ends with
+a verdict per image:
+
+```console
+$ vitro test
+windows  passed
+macos    failed (exit code 101)
+$ vitro test windows -- --nocapture    # one image, with extra arguments
+```
+
+[docs/spec/project-file.md](docs/spec/project-file.md) lists every key.
 
 ## Reaching a guest from other tools
 

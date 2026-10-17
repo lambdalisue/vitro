@@ -68,6 +68,19 @@ pub enum Command {
         memory: Option<ByteSize>,
     },
 
+    /// Run the project's command on its images, each in a fresh VM
+    ///
+    /// The project is described by the nearest `vitro.toml` at or above the
+    /// current directory. Each image gets a new VM, the project copied in, the
+    /// command, and the VM destroyed afterwards.
+    Test {
+        /// Images to run on instead of the project's `images`
+        images: Vec<String>,
+        /// Appended to the project's command, after `--`
+        #[arg(last = true, value_name = "ARGS")]
+        extra: Vec<String>,
+    },
+
     /// Run a command in a VM and pass its exit code through
     ///
     /// The VM can be left out while only one is running: when the first word

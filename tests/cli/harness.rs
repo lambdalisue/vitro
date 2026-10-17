@@ -158,7 +158,17 @@ exit 0
         self.run_with_env(args, &[])
     }
 
+    /// Run from `dir` rather than from the home directory, for commands that
+    /// look for a file where they are started.
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> Run {
+        self.run_from(Some(dir), args, &[])
+    }
+
     pub fn run_with_env(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
+        self.run_from(None, args, env)
+    }
+
+    fn run_from(&self, dir: Option<&Path>, args: &[&str], env: &[(&str, &str)]) -> Run {
         // The host's separator, not a colon: on Windows a colon makes the whole
         // variable one unusable entry, and every program lookup then fails for
         // a reason that has nothing to do with the test.
@@ -193,6 +203,7 @@ exit 0
         for (key, value) in env {
             command.env(key, value);
         }
+        command.current_dir(dir.unwrap_or(self.home()));
 
         Run::new(command.output().expect("vitro should be runnable"))
     }

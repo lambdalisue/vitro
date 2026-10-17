@@ -6,6 +6,7 @@
 
 mod config;
 mod paths;
+mod project;
 mod state;
 mod units;
 
@@ -30,5 +31,6 @@ pub mod vnc;
 
 pub use config::*;
 pub use paths::*;
+pub use project::*;
 pub use state::*;
 pub use units::*;
