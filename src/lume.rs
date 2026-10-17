@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
-use crate::ByteSize;
+use crate::{process, ByteSize, SysinfoProbe};
 
 /// Lume reports telemetry unless told not to. vitro tells it not to on every
 /// call rather than relying on the user having run `lume config telemetry
@@ -110,6 +110,35 @@ pub fn clone_args(from: &str, to: &str) -> Vec<String> {
 
 pub fn stop_args(name: &str) -> Vec<String> {
     vec!["stop".into(), name.into()]
+}
+
+/// How long a guest gets to shut down once the process holding it has been
+/// interrupted.
+const STOP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Stop a guest lume is running, and return once it has stopped.
+///
+/// Through the `lume run` process that holds the guest rather than `lume
+/// stop`: lume 0.5.3 answers `lume stop` with exit status 130 and leaves the
+/// guest running, while an interrupt to the holding process shuts the guest
+/// down cleanly. `lume stop` remains the fallback for a guest no such process
+/// holds, such as one `lume serve` started.
+pub fn stop(binary: &Path, name: &str) -> Result<()> {
+    let Some((pid, start)) = SysinfoProbe::new().find_by_command(&["lume", "run", name]) else {
+        return run(binary, &stop_args(name)).map(drop);
+    };
+    process::interrupt(pid);
+    // Not cut short by Ctrl-C: the caller deletes the guest next, and lume
+    // refuses to delete one that is still running.
+    if process::wait_until_gone(STOP_TIMEOUT, || {
+        process::is_running(&SysinfoProbe::new(), pid, start)
+    }) {
+        return Ok(());
+    }
+    bail!(
+        "lume did not stop {name} within {}s",
+        STOP_TIMEOUT.as_secs()
+    )
 }
 
 pub fn delete_args(name: &str) -> Vec<String> {

@@ -353,7 +353,7 @@ fn build_lume(paths: &Paths, config: &Config, image: &Image, spec: &Build) -> Re
 
     let result = finish_lume(&binary, config, paths, image, spec, golden, &staging);
     if result.is_err() {
-        let _ = lume::run(&binary, &lume::stop_args(&staging));
+        let _ = lume::stop(&binary, &staging);
         let _ = lume::run(&binary, &lume::delete_args(&staging));
     }
     result?;
@@ -433,7 +433,7 @@ fn finish_lume(
         provisioned?;
     }
 
-    lume::run(binary, &lume::stop_args(staging))?;
+    lume::stop(binary, staging)?;
 
     // A clone on APFS is made by reference, so this is seconds rather than the
     // minutes a copy of tens of gigabytes would take.

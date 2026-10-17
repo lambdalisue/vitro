@@ -131,9 +131,9 @@ fn promote_lume(
 
     // Stopped rather than shut down from inside: `lume shutdown` wants the
     // guest account's password, which vitro does not keep — it authenticates
-    // with a key. `lume stop` is Virtualization.framework's own request to the
-    // guest, not a power cut.
-    lume::run(&binary, &lume::stop_args(&record.name))?;
+    // with a key. `lume::stop` has lume shut the guest down through
+    // Virtualization.framework, which is not a power cut.
+    lume::stop(&binary, &record.name)?;
 
     signals::check()?;
     if options.force {

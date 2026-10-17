@@ -489,6 +489,60 @@ fn jobs_lists_each_job_with_how_it_stands() {
     );
 }
 
+/// A `lume` whose `run` holds a VM until interrupted, as the real one does,
+/// and whose `stop` fails the way lume 0.5.3's does: 130, VM still running.
+#[cfg(unix)]
+fn fake_lume(sandbox: &Sandbox) {
+    sandbox.fake_bin_with(
+        "lume",
+        r#"case "$1" in
+  run) trap 'exit 0' INT; : > "$0.ready"; sleep 300 & wait ;;
+  stop) exit 130 ;;
+esac
+exit 0"#,
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn destroying_a_lume_guest_stops_its_process_even_when_lume_stop_fails() {
+    let sandbox = Sandbox::new();
+    fake_lume(&sandbox);
+    let pid = sandbox.spawn_detached("lume", &["run", "mac-7f3a2c", "--display", "none"]);
+    // An interrupt sent before the trap is set would be lost, not delivered.
+    let ready = sandbox.home().join("bin/lume.ready");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the fake lume never got ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    sandbox.write_lume_record("mac-7f3a2c", pid);
+
+    sandbox
+        .run(&["destroy", "mac-7f3a2c"])
+        .success()
+        .stdout_contains("stopped mac-7f3a2c");
+
+    let alive = std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success();
+    assert!(!alive, "the lume process should be gone");
+    assert!(
+        sandbox
+            .calls("lume")
+            .iter()
+            .any(|c| c == "delete mac-7f3a2c --force"),
+        "{:?}",
+        sandbox.calls("lume")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn restart_returns_only_once_the_guest_has_booted_again() {
