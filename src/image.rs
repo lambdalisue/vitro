@@ -211,15 +211,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_failing_qemu_img_reports_what_it_printed() {
-        use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
         let fake = temp.path().join("qemu-img");
-        std::fs::write(
+        crate::testing::write_script(
             &fake,
-            "#!/bin/sh\necho \"qemu-img: Could not open 'x': No such file\" >&2\nexit 1\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+            "echo \"qemu-img: Could not open 'x': No such file\" >&2\nexit 1",
+        );
 
         let err = run(&fake, &check_args(Path::new("x")))
             .unwrap_err()

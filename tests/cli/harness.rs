@@ -73,13 +73,16 @@ impl Sandbox {
 
         let calls = self.home().join("calls");
         fs::create_dir_all(&calls).expect("calls directory");
+        // The probe line answers `runnable`'s check before anything is
+        // recorded, so the check leaves no call behind.
         let script = format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}/{name}.log'\n{body}\n",
+            "#!/bin/sh\n[ -n \"$VITRO_TEST_PROBE\" ] && exit 0\nprintf '%s\\n' \"$*\" >> '{}/{name}.log'\n{body}\n",
             calls.display()
         );
         let path = self.home().join("bin").join(name);
         fs::write(&path, script).expect("write fake binary");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        runnable(&path);
         self
     }
 
@@ -333,4 +336,29 @@ impl Run {
     pub fn json(&self) -> serde_json::Value {
         serde_json::from_str(&self.stdout).expect("stdout should be JSON")
     }
+}
+
+/// `ETXTBSY`, which Linux and macOS both number 26. `ErrorKind` has no stable
+/// name for it.
+#[cfg(unix)]
+const TEXT_FILE_BUSY: i32 = 26;
+
+/// Return once the fake at `path` can actually be run.
+///
+/// Tests run on many threads. When another thread forks while this one still
+/// has the file open for writing, the child holds that descriptor until it
+/// execs, and running the fake meanwhile fails with "Text file busy" — inside
+/// vitro, where it reads as a real failure. A probe run waits that out.
+#[cfg(unix)]
+fn runnable(path: &Path) {
+    for _ in 0..200 {
+        match Command::new(path).env("VITRO_TEST_PROBE", "1").status() {
+            Err(e) if e.raw_os_error() == Some(TEXT_FILE_BUSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => panic!("cannot run {}: {e}", path.display()),
+            Ok(_) => return,
+        }
+    }
+    panic!("{} stayed busy", path.display());
 }

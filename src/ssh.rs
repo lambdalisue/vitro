@@ -923,10 +923,8 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_ssh(dir: &Path, exit_code: i32) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let path = dir.join("ssh");
-        std::fs::write(&path, format!("#!/bin/sh\nexit {exit_code}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::testing::write_script(&path, &format!("exit {exit_code}"));
         path
     }
 }
