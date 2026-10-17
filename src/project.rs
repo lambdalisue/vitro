@@ -20,7 +20,10 @@ pub struct Project {
     pub dir: PathBuf,
     /// The images `vitro test` runs on when none is named, in order.
     pub images: Vec<String>,
-    pub command: Vec<String>,
+    /// The command every image runs unless it has its own.
+    command: Option<Vec<String>>,
+    /// What differs for one image, by its key.
+    per_image: BTreeMap<String, ImageSettings>,
     /// The directory sent to the guest before the command, or `None` when the
     /// command needs nothing from the host.
     pub sync: Option<PathBuf>,
@@ -29,17 +32,48 @@ pub struct Project {
     pub memory: Option<ByteSize>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ImageSettings {
+    command: Option<Vec<String>>,
+    env: Vec<(String, String)>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectFile {
     #[serde(default)]
     images: Vec<String>,
-    command: Vec<String>,
+    command: Option<Vec<String>>,
     sync: Option<SyncSetting>,
     #[serde(default)]
     env: BTreeMap<String, String>,
     cpus: Option<u32>,
     memory: Option<ByteSize>,
+    #[serde(default)]
+    image: BTreeMap<String, ImageSection>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageSection {
+    command: Option<Vec<String>>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+}
+
+fn variables(env: BTreeMap<String, String>) -> Result<Vec<(String, String)>> {
+    env.into_iter()
+        .map(|(name, value)| ssh::parse_env(&format!("{name}={value}")))
+        .collect()
+}
+
+fn non_empty(command: Option<Vec<String>>, place: &str) -> Result<Option<Vec<String>>> {
+    match command {
+        Some(words) if words.is_empty() => bail!(
+            "`command` in {place} is empty; it is the command `vitro test` runs, one word per element"
+        ),
+        other => Ok(other),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,8 +102,28 @@ impl Project {
 
     pub fn parse(text: &str, dir: &Path) -> Result<Self> {
         let file: ProjectFile = toml::from_str(text)?;
-        if file.command.is_empty() {
-            bail!("`command` is empty; it is the command `vitro test` runs, one word per element");
+        let command = non_empty(file.command, "the file")?;
+        let mut per_image = BTreeMap::new();
+        for (key, section) in file.image {
+            let place = format!("[image.{key}]");
+            let settings = ImageSettings {
+                command: non_empty(section.command, &place)?,
+                env: variables(section.env).with_context(|| format!("in {place}"))?,
+            };
+            per_image.insert(key, settings);
+        }
+        // Said here rather than when `vitro test` reaches the image, which may
+        // be after the images before it have run for an hour.
+        let has_command = |image: &str| {
+            command.is_some() || per_image.get(image).is_some_and(|s| s.command.is_some())
+        };
+        if let Some(image) = file.images.iter().find(|image| !has_command(image)) {
+            bail!("image {image:?} has no command: set `command`, or `command` in [image.{image}]");
+        }
+        if command.is_none() && per_image.values().all(|s| s.command.is_none()) {
+            bail!(
+                "there is no `command`; it is the command `vitro test` runs, one word per element"
+            );
         }
         if file.cpus == Some(0) {
             bail!("`cpus` has to be at least 1");
@@ -79,21 +133,34 @@ impl Project {
             Some(SyncSetting::Enabled(false)) => None,
             Some(SyncSetting::Dir(relative)) => Some(dir.join(relative)),
         };
-        let env = file
-            .env
-            .into_iter()
-            .map(|(name, value)| ssh::parse_env(&format!("{name}={value}")))
-            .collect::<Result<_>>()
-            .context("in [env]")?;
+        let env = variables(file.env).context("in [env]")?;
         Ok(Self {
             dir: dir.to_path_buf(),
             images: file.images,
-            command: file.command,
+            command,
+            per_image,
             sync,
             env,
             cpus: file.cpus,
             memory: file.memory,
         })
+    }
+
+    /// The command `image` runs: its own, or the shared one.
+    pub fn command_for(&self, image: &str) -> Option<&[String]> {
+        self.per_image
+            .get(image)
+            .and_then(|settings| settings.command.as_deref())
+            .or(self.command.as_deref())
+    }
+
+    /// The shared variables with `image`'s own laid over them, sorted by name.
+    pub fn env_for(&self, image: &str) -> Vec<(String, String)> {
+        let mut env: BTreeMap<String, String> = self.env.iter().cloned().collect();
+        if let Some(settings) = self.per_image.get(image) {
+            env.extend(settings.env.iter().cloned());
+        }
+        env.into_iter().collect()
     }
 }
 
@@ -122,7 +189,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(project.images, ["windows", "macos"]);
-        assert_eq!(project.command, ["cargo", "test", "--workspace"]);
+        assert_eq!(
+            project.command_for("windows").unwrap(),
+            ["cargo", "test", "--workspace"]
+        );
         assert_eq!(project.sync, Some(PathBuf::from("/work/app/crates")));
         assert_eq!(project.cpus, Some(8));
         assert_eq!(project.memory, Some("16G".parse().unwrap()));
@@ -148,18 +218,98 @@ mod tests {
     #[test]
     fn a_missing_or_empty_command_is_refused() {
         assert!(parse(r#"images = ["linux"]"#).is_err());
+        assert!(parse("").is_err());
         let err = format!("{:#}", parse("command = []").unwrap_err());
         assert!(err.contains("command"), "{err}");
+    }
+
+    #[test]
+    fn an_image_can_replace_the_command_and_add_to_the_variables() {
+        let project = parse(
+            r#"
+            images = ["windows", "linux"]
+            command = ["cargo", "test"]
+
+            [env]
+            RUST_BACKTRACE = "1"
+            LEVEL = "info"
+
+            [image.windows]
+            command = ["cargo", "test", "--features", "tsf"]
+            env = { LEVEL = "debug", WINDOWS_ONLY = "yes" }
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            project.command_for("windows").unwrap(),
+            ["cargo", "test", "--features", "tsf"]
+        );
+        assert_eq!(project.command_for("linux").unwrap(), ["cargo", "test"]);
+        assert_eq!(
+            project.env_for("windows"),
+            [
+                ("LEVEL".to_string(), "debug".to_string()),
+                ("RUST_BACKTRACE".into(), "1".into()),
+                ("WINDOWS_ONLY".into(), "yes".into()),
+            ]
+        );
+        assert_eq!(
+            project.env_for("linux"),
+            [
+                ("LEVEL".to_string(), "info".to_string()),
+                ("RUST_BACKTRACE".into(), "1".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_shared_command_can_be_left_out_when_every_listed_image_has_its_own() {
+        let project = parse(
+            r#"
+            images = ["windows", "linux"]
+            [image.windows]
+            command = ["pwsh", "-File", "test.ps1"]
+            [image.linux]
+            command = ["make", "check"]
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(project.command_for("linux").unwrap(), ["make", "check"]);
+        assert_eq!(project.command_for("macos"), None);
+    }
+
+    #[test]
+    fn a_listed_image_left_without_a_command_is_refused() {
+        let err = format!(
+            "{:#}",
+            parse(
+                r#"
+                images = ["windows", "linux"]
+                [image.windows]
+                command = ["x"]
+                "#,
+            )
+            .unwrap_err()
+        );
+
+        assert!(err.contains("linux"), "{err}");
     }
 
     #[test]
     fn a_misspelt_key_is_named_rather_than_ignored() {
         let err = format!(
             "{:#}",
-            parse("command = [\"x\"]\nimage = \"linux\"").unwrap_err()
+            parse("command = [\"x\"]\nimgaes = [\"linux\"]").unwrap_err()
         );
+        assert!(err.contains("imgaes"), "{err}");
 
-        assert!(err.contains("image"), "{err}");
+        let err = format!(
+            "{:#}",
+            parse("command = [\"x\"]\n[image.linux]\ncomand = [\"y\"]").unwrap_err()
+        );
+        assert!(err.contains("comand"), "{err}");
     }
 
     #[test]
