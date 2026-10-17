@@ -58,7 +58,27 @@
             # The tests run in CI and with `just test`.
             doCheck = false;
           };
-          vitro = craneLib.buildPackage (build // { cargoArtifacts = craneLib.buildDepsOnly build; });
+          vitro = craneLib.buildPackage (
+            build
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly build;
+              nativeBuildInputs = [ pkgs.installShellFiles ];
+              # The scripts come from the binary itself, so they can only be
+              # made where it runs.
+              postInstall = lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+                installShellCompletion --cmd vitro \
+                  --bash <($out/bin/vitro completions bash) \
+                  --fish <($out/bin/vitro completions fish) \
+                  --zsh <($out/bin/vitro completions zsh)
+              '';
+              meta = {
+                description = "Disposable development VMs driven from a CLI";
+                homepage = "https://github.com/lambdalisue/vitro";
+                license = lib.licenses.mit;
+                mainProgram = "vitro";
+              };
+            }
+          );
         in
         {
           inherit vitro;
