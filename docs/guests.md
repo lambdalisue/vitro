@@ -195,6 +195,10 @@ an address and then open port 22, and those are not the same moment.
   timeout (-1712) instead. Move and resize windows with the GUI commands,
   whose input arrives from outside the guest and needs no permission: `vitro
   drag` on a window's corner resizes it, on its title bar moves it.
+- `vitro scroll` turns the wheel, and macOS reverses what a wheel does to the
+  content: natural scrolling is on by default, so `down` brings earlier
+  content into view and `up` later content, the opposite of a Linux or
+  Windows guest.
 
 ## A toolchain in the image
 
