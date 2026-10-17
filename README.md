@@ -207,6 +207,14 @@ the same line works against a Windows guest, whose shell is PowerShell:
 $ vitro exec --cwd project --env RUST_BACKTRACE=1 windows cargo test
 ```
 
+`exec --sync <dir>` copies a host directory into the guest first and runs the
+command inside it. Only what `.gitignore` keeps is sent, so `target/` and
+`.git` stay behind:
+
+```console
+$ vitro exec --sync . windows cargo test
+```
+
 ## Reaching a guest from other tools
 
 Copying is built in. A guest path is written `<vm>:<path>`, or `:<path>` while

@@ -22,3 +22,16 @@ before any VM is contacted.
 
 Both are written in the guest shell's own syntax, so the same `vitro exec` line
 means the same thing on every guest.
+
+## Sending a directory first
+
+`--sync <dir>` copies a host directory into the guest before the command runs,
+as a directory of the same name in the guest account's home, and the command
+runs inside it unless `--cwd` says otherwise.
+
+What `.gitignore`, `.ignore` and `.git/info/exclude` leave out is not sent,
+whether or not the directory is a Git checkout, and neither is `.git`. Hidden
+files are sent. Files already in the guest directory are overwritten; files
+removed on the host are not removed from the guest.
+
+If the copy fails, the command does not run.

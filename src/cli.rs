@@ -46,6 +46,10 @@ pub enum Command {
     /// The VM can be left out while only one is running: when the first word
     /// names no VM, the whole line is the command.
     Exec {
+        /// Copy this host directory into the guest first, minus what
+        /// .gitignore leaves out, and run the command inside it
+        #[arg(long, value_name = "DIR")]
+        sync: Option<PathBuf>,
         /// Run the command in this guest directory
         #[arg(long, value_name = "DIR")]
         cwd: Option<String>,
@@ -211,7 +215,7 @@ mod tests {
         ])
         .unwrap();
 
-        let Some(Command::Exec { cwd, env, args }) = cli.command else {
+        let Some(Command::Exec { cwd, env, args, .. }) = cli.command else {
             panic!("expected exec");
         };
         assert_eq!(cwd.as_deref(), Some("src"));

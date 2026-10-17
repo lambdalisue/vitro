@@ -4,6 +4,8 @@
 //! inside the VM has to fail outside it, or vitro cannot be used for
 //! verification at all, which is the only reason it exists.
 
+use std::path::Path;
+
 use anyhow::{bail, Result};
 
 use crate::{process, ssh, tools, Config, Paths, Store, SysinfoProbe, VmRecord};
@@ -15,9 +17,18 @@ pub fn exec(
     config: &Config,
     name: &str,
     command: &[String],
-    prelude: ssh::Prelude,
+    sync: Option<&Path>,
+    mut prelude: ssh::Prelude,
 ) -> Result<i32> {
     let (record, target, ssh_binary) = prepare(paths, config, name)?;
+
+    if let Some(dir) = sync {
+        let scp = tools::resolve("scp", config.tools().scp.as_deref(), "tools.scp")?.path;
+        let landed = crate::sync::sync(&ssh_binary, &scp, &target, record.guest, dir)?;
+        // An explicit `--cwd` still wins: it may name a directory inside the
+        // synced tree, or somewhere else entirely.
+        prelude.cwd.get_or_insert(landed);
+    }
 
     ssh::run_passthrough(
         &ssh_binary,

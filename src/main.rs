@@ -111,7 +111,12 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Exec { cwd, env, args }) => {
+        Some(Command::Exec {
+            sync,
+            cwd,
+            env,
+            args,
+        }) => {
             // Before the VM is looked up, so a typo costs no connection.
             let prelude = ssh::Prelude {
                 cwd,
@@ -121,7 +126,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                     .collect::<Result<_>>()?,
             };
             let (name, command) = split_leading_vm(&paths, &args)?;
-            exec::exec(&paths, &config, &name, &command, prelude)
+            exec::exec(&paths, &config, &name, &command, sync.as_deref(), prelude)
         }
 
         Some(Command::Promote {

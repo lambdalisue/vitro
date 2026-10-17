@@ -321,6 +321,50 @@ fn cp_returns_what_scp_returned() {
     assert_eq!(run.code, 3, "stderr: {}", run.stderr);
 }
 
+#[cfg(unix)]
+#[test]
+fn exec_with_sync_sends_the_tree_unpacks_it_and_runs_inside_it() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.write_file("work/proj/Makefile", b"all:\n");
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 0);
+    let project = sandbox.home().join("work/proj");
+
+    sandbox
+        .run(&["exec", "--sync", project.to_str().unwrap(), "linux", "make"])
+        .success();
+
+    let scp = sandbox.calls("scp");
+    assert_eq!(scp.len(), 1, "{scp:?}");
+    assert!(
+        scp[0].ends_with("dev@127.0.0.1:.vitro-sync.tar"),
+        "{}",
+        scp[0]
+    );
+    let ssh = sandbox.calls("ssh");
+    assert!(ssh[0].contains("tar -xf .vitro-sync.tar"), "{}", ssh[0]);
+    assert!(ssh[1].ends_with("-- cd proj && make"), "{}", ssh[1]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_sync_does_not_run_the_command_against_a_stale_tree() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.write_file("work/proj/Makefile", b"all:\n");
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 1);
+    let project = sandbox.home().join("work/proj");
+
+    sandbox
+        .run(&["exec", "--sync", project.to_str().unwrap(), "linux", "make"])
+        .failure()
+        .stderr_contains("could not copy");
+
+    assert!(sandbox.calls("ssh").is_empty());
+}
+
 #[test]
 fn a_malformed_variable_is_refused_before_any_vm_is_looked_up() {
     Sandbox::new()
