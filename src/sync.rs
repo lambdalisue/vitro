@@ -56,7 +56,10 @@ pub fn guest_dir(dir: &Path) -> Result<String> {
 pub fn archive(dir: &Path, root: &str, out: &Path) -> Result<Vec<PathBuf>> {
     let file = File::create(out).with_context(|| format!("cannot create {}", out.display()))?;
     let mut builder = tar::Builder::new(file);
-    builder.mode(tar::HeaderMode::Deterministic);
+    // Not `Deterministic`: it stamps every file with one fixed date in the
+    // past, which makes edited sources look older than an earlier build's
+    // outputs in the guest.
+    builder.mode(tar::HeaderMode::Complete);
     let inside = dir
         .canonicalize()
         .with_context(|| format!("cannot read {}", dir.display()))?;
@@ -353,6 +356,36 @@ mod tests {
         let skipped = archive(root, "proj", &out.path().join("a.tar")).unwrap();
 
         assert_eq!(skipped, [root.join("dangling")]);
+    }
+
+    #[test]
+    fn each_file_keeps_its_own_modification_time() {
+        // A fixed date in the past would make sources look older than the
+        // outputs of an earlier build in the guest, and the build would skip
+        // them.
+        let project = project();
+        let edited = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_000_000);
+        File::options()
+            .write(true)
+            .open(project.path().join("src/main.rs"))
+            .unwrap()
+            .set_modified(edited)
+            .unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let archive_path = out.path().join("a.tar");
+
+        archive(project.path(), "proj", &archive_path).unwrap();
+
+        let mtime = tar::Archive::new(File::open(&archive_path).unwrap())
+            .entries()
+            .unwrap()
+            .map(|e| e.unwrap())
+            .find(|e| e.path().unwrap().ends_with("src/main.rs"))
+            .unwrap()
+            .header()
+            .mtime()
+            .unwrap();
+        assert_eq!(mtime, 1_790_000_000);
     }
 
     #[test]
