@@ -63,11 +63,11 @@ $ brew install lambdalisue/vitro/vitro
 ```
 
 With Nix, the flake installs vitro with its shell completions; QEMU comes from
-wherever you get it. Main's builds are kept in a Cachix cache, so with it added
+wherever you get it. Main's builds are kept in the `vitro` Cachix cache, which
+the flake offers on first use — accept it, or run `cachix use vitro` once, and
 this is a download rather than a Rust build:
 
 ```console
-$ cachix use vitro                                 # optional: prebuilt binaries
 $ nix profile install github:lambdalisue/vitro
 ```
 
