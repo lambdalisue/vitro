@@ -111,7 +111,10 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Exec { name, command }) => exec::exec(&paths, &config, &name, &command),
+        Some(Command::Exec { args }) => {
+            let (name, command) = split_leading_vm(&paths, &args)?;
+            exec::exec(&paths, &config, &name, &command)
+        }
 
         Some(Command::Promote {
             name,
@@ -159,11 +162,13 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Forward { name, ports }) => forward::forward(&paths, &config, &name, &ports),
 
         Some(Command::Port { name }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
             println!("{}", inspect::port(&paths, &SysinfoProbe::new(), &name)?);
             Ok(0)
         }
 
         Some(Command::Inspect { name }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
             let inspected = inspect::inspect(&paths, &SysinfoProbe::new(), &name)?;
             let mut stdout = std::io::stdout().lock();
             serde_json::to_writer_pretty(&mut stdout, &inspected)?;
@@ -189,6 +194,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Doctor) => doctor::report(&paths, &config),
 
         Some(Command::Screenshot { name, out }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
             let path = gui::screenshot(&paths, &config, &name, out.as_deref())?;
             println!("{}", path.display());
             Ok(0)
@@ -214,7 +220,8 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Launch { name, command }) => {
+        Some(Command::Launch { args }) => {
+            let (name, command) = split_leading_vm(&paths, &args)?;
             gui::launch(&paths, &config, &name, &command)?;
             println!("launched {} in {name}", command.join(" "));
             Ok(0)
@@ -222,7 +229,10 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
-        Some(Command::Ssh { name }) => exec::interactive(&paths, &config, &name),
+        Some(Command::Ssh { name }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
+            exec::interactive(&paths, &config, &name)
+        }
 
         Some(Command::Destroy {
             name,
@@ -256,6 +266,14 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+fn pick_vm(paths: &Paths, name: Option<&str>) -> Result<String> {
+    Store::new(paths.state_dir()).resolve_or_sole(name, &SysinfoProbe::new())
+}
+
+fn split_leading_vm(paths: &Paths, words: &[String]) -> Result<(String, Vec<String>)> {
+    Store::new(paths.state_dir()).split_leading_vm(words, &SysinfoProbe::new())
 }
 
 fn show_status(paths: &Paths, config: &Config, name: Option<&str>, json: bool) -> Result<i32> {

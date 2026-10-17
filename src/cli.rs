@@ -42,14 +42,16 @@ pub enum Command {
     },
 
     /// Run a command in a VM and pass its exit code through
+    ///
+    /// The VM can be left out while only one is running: when the first word
+    /// names no VM, the whole line is the command.
     Exec {
-        name: String,
-        #[arg(trailing_var_arg = true, required = true)]
-        command: Vec<String>,
+        #[arg(trailing_var_arg = true, required = true, value_name = "VM] [COMMAND")]
+        args: Vec<String>,
     },
 
     /// Open an interactive shell in a VM
-    Ssh { name: String },
+    Ssh { name: Option<String> },
 
     /// Stop a VM and delete its overlay
     Destroy {
@@ -103,10 +105,10 @@ pub enum Command {
     },
 
     /// Print a VM's SSH port and nothing else
-    Port { name: String },
+    Port { name: Option<String> },
 
     /// Print a VM's record as JSON
-    Inspect { name: String },
+    Inspect { name: Option<String> },
 
     /// Get from nothing to a guest you can build, step by step
     Setup,
@@ -130,7 +132,7 @@ pub enum Command {
 
     /// Save a picture of the guest's screen
     Screenshot {
-        name: String,
+        name: Option<String>,
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
     },
@@ -155,9 +157,8 @@ pub enum Command {
 
     /// Start a program on the guest's desktop
     Launch {
-        name: String,
-        #[arg(trailing_var_arg = true, required = true)]
-        command: Vec<String>,
+        #[arg(trailing_var_arg = true, required = true, value_name = "VM] [COMMAND")]
+        args: Vec<String>,
     },
 }
 
@@ -182,11 +183,10 @@ mod tests {
         let cli =
             Cli::try_parse_from(["vitro", "exec", "vm1", "cargo", "test", "--", "-q"]).unwrap();
 
-        let Some(Command::Exec { name, command }) = cli.command else {
+        let Some(Command::Exec { args }) = cli.command else {
             panic!("expected exec");
         };
-        assert_eq!(name, "vm1");
-        assert_eq!(command, ["cargo", "test", "--", "-q"]);
+        assert_eq!(args, ["vm1", "cargo", "test", "--", "-q"]);
     }
 
     #[test]

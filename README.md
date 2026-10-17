@@ -172,8 +172,8 @@ toolchain is spent once.
 | `setup`                  | Get from nothing to a guest you can build            |
 | `build <image>`          | Build a golden image from installation media         |
 | `run <image>`            | Start a VM from a golden image                       |
-| `exec <vm> <cmd>…`       | Run a command in a VM and pass its exit code through |
-| `ssh <vm>`               | Open an interactive shell                            |
+| `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
+| `ssh [<vm>]`             | Open an interactive shell                            |
 | `destroy <vm>` / `--all` | Stop a VM and delete its overlay                     |
 | `promote <vm>`           | Turn a running VM into a new golden image            |
 | `ls`                     | List VMs and golden images (`--json`, `--prune`)     |
@@ -182,15 +182,18 @@ toolchain is spent once.
 | `doctor`                 | Check everything `run` and `build` depend on         |
 | `ssh-config [<vm>]`      | Print an `ssh_config` block (`--write`)              |
 | `forward <vm> <port>…`   | Forward guest ports to the host                      |
-| `port <vm>`              | Print the SSH port and nothing else                  |
-| `inspect <vm>`           | Print the VM's record as JSON                        |
-| `screenshot <vm>`        | Save a picture of the guest's screen                 |
+| `port [<vm>]`            | Print the SSH port and nothing else                  |
+| `inspect [<vm>]`         | Print the VM's record as JSON                        |
+| `screenshot [<vm>]`      | Save a picture of the guest's screen                 |
 | `key <vm> <chord>…`      | Press keys on the guest's keyboard (`shift-a`)       |
 | `click <vm> <x> <y>`     | Click at a pixel of the guest's screen               |
-| `launch <vm> <cmd>…`     | Start a program on the guest's desktop               |
+| `launch [<vm>] <cmd>…`   | Start a program on the guest's desktop               |
 
-A VM can be named by any unambiguous prefix. An ambiguous one lists the
-candidates rather than picking for you.
+A VM can be named by its full name, by the image it was started from, or by
+any unambiguous prefix — `vitro exec windows cargo test` reaches the one
+Windows VM. A name that fits several lists the candidates rather than picking
+for you. Where the table shows `[<vm>]`, the VM can be left out while only one
+is running.
 
 Exit codes are `0` success, `1` failure, `2` a bad command line — except
 `exec`, which returns whatever the guest's command returned.
