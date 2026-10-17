@@ -612,6 +612,86 @@ fn run_can_size_one_vm_differently_from_its_image() {
     sandbox.run(&["destroy", "--all"]).success();
 }
 
+#[cfg(unix)]
+fn sandbox_with_a_linux_image() -> Sandbox {
+    let sandbox = Sandbox::new();
+    let golden = sandbox.write_file(".local/share/vitro/golden/linux.qcow2", &[0u8; 1024]);
+    sandbox.write_config(&format!(
+        r#"
+        [images.linux]
+        golden = "{}"
+        ssh_user = "dev"
+        firmware = "/dev/null"
+        "#,
+        golden.display()
+    ));
+    sandbox.fake_qemu("qemu-system-aarch64");
+    sandbox.fake_qemu("qemu-system-x86_64");
+    sandbox.fake_bin("qemu-img", 0);
+    sandbox.fake_bin("scp", 0);
+    sandbox
+}
+
+#[cfg(unix)]
+fn vm_dirs(sandbox: &Sandbox) -> Vec<std::ffi::OsString> {
+    std::fs::read_dir(sandbox.state_dir().join("vms"))
+        .map(|d| d.filter_map(Result::ok).map(|e| e.file_name()).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(unix)]
+#[test]
+fn run_rm_with_a_command_returns_its_exit_code_and_leaves_nothing_behind() {
+    let sandbox = sandbox_with_a_linux_image();
+    // Answers the readiness probe, then fails the command with a code of its own.
+    sandbox.fake_bin_with("ssh", r#"case "$*" in *"-- exit") exit 0 ;; esac; exit 7"#);
+
+    let run = sandbox.run(&["run", "--rm", "linux", "--", "uname", "-a"]);
+
+    assert_eq!(run.code, 7, "stderr: {}", run.stderr);
+    assert!(!run.stdout.contains("is up"), "{}", run.stdout);
+    assert!(run.stderr.contains("is up"), "{}", run.stderr);
+    let last = sandbox.calls("ssh").pop().unwrap();
+    assert!(last.ends_with("-- uname -a"), "{last}");
+    assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_rm_destroys_the_vm_even_when_the_sync_fails() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 1);
+    let project = sandbox.home().join("proj");
+    std::fs::create_dir_all(&project).unwrap();
+
+    sandbox
+        .run(&[
+            "run",
+            "--rm",
+            "--sync",
+            project.to_str().unwrap(),
+            "linux",
+            "--",
+            "make",
+        ])
+        .failure();
+
+    assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_with_a_command_but_without_rm_keeps_the_vm() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox.run(&["run", "linux", "--", "true"]).success();
+
+    assert_eq!(vm_dirs(&sandbox).len(), 1);
+    sandbox.run(&["destroy", "--all"]).success();
+}
+
 #[test]
 fn a_size_that_is_not_a_size_is_a_usage_error() {
     Sandbox::new()

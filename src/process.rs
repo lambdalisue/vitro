@@ -48,13 +48,17 @@ pub fn kill(pid: u32) {
 /// An interrupted wait gives up immediately and reports the process as still
 /// present, which is the truth. These waits run to three minutes, and a Ctrl-C
 /// that only takes effect after them is one the user has to sit through.
-pub fn wait_for_exit(timeout: Duration, mut probe: impl FnMut() -> bool) -> bool {
+pub fn wait_for_exit(timeout: Duration, probe: impl FnMut() -> bool) -> bool {
+    wait(timeout, probe, true)
+}
+
+fn wait(timeout: Duration, mut probe: impl FnMut() -> bool, interruptible: bool) -> bool {
     let started = Instant::now();
     loop {
         if !probe() {
             return true;
         }
-        if started.elapsed() >= timeout || crate::signals::interrupted() {
+        if started.elapsed() >= timeout || (interruptible && crate::signals::interrupted()) {
             return false;
         }
         std::thread::sleep(POLL_INTERVAL);
@@ -87,11 +91,18 @@ pub fn stop_and_wait(pid: u32, start_time: Option<u64>) -> bool {
         return true;
     }
     kill(pid);
-    wait_for_exit(TERM_TIMEOUT, alive)
+    // Not cut short by Ctrl-C, unlike the wait above: a killed process is
+    // gone within moments, and `run --rm` cleans up right after an interrupt,
+    // where giving up at once would report a VM that is dying as one that
+    // could not be stopped and leave its record behind.
+    wait(KILL_TIMEOUT, alive, false)
 }
 
 /// How long a process gets between being asked to stop and being made to.
 const TERM_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a killed process gets to disappear from the process table.
+const KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(unix)]
 unsafe fn libc_kill(pid: i32, signal: i32) {

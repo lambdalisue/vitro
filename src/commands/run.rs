@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Context, Result};
 use time::OffsetDateTime;
 
+use crate::commands::{destroy, exec, sshconfig};
 use crate::{
     golden, image, lume, process, qemu, ssh, tools, Backend, ByteSize, Config, Golden, Image,
     Paths, ProcessProbe, Store, SysinfoProbe, VmRecord,
@@ -248,6 +249,64 @@ fn run_lume(
 
     guard.commit();
     Ok(record)
+}
+
+/// What to do with a VM once `run` has started it.
+pub struct Then {
+    /// Empty for an interactive shell.
+    pub command: Vec<String>,
+    pub sync: Option<PathBuf>,
+    pub prelude: ssh::Prelude,
+    /// Destroy the VM afterwards, whatever happened.
+    pub remove: bool,
+}
+
+/// Run the command, or open a shell, in a VM `run` just started, and return
+/// the guest's exit code.
+pub fn then(paths: &Paths, config: &Config, name: &str, then: Then) -> Result<i32> {
+    let _removal = then.remove.then(|| Removal {
+        paths,
+        config,
+        name: name.to_string(),
+    });
+    if then.command.is_empty() {
+        exec::interactive(paths, config, name)
+    } else {
+        exec::exec(
+            paths,
+            config,
+            name,
+            &then.command,
+            then.sync.as_deref(),
+            then.prelude,
+        )
+    }
+}
+
+/// Destroys a VM when dropped, so a failed sync, a failed command and an
+/// interrupted one all end the same way.
+struct Removal<'a> {
+    paths: &'a Paths,
+    config: &'a Config,
+    name: String,
+}
+
+impl Drop for Removal<'_> {
+    fn drop(&mut self) {
+        let options = destroy::Options { graceful: false };
+        let failure = match destroy::destroy_one(self.paths, self.config, &self.name, &options) {
+            Ok(destroy::Outcome::Failed { reason, .. }) => Some(reason),
+            Err(e) => Some(format!("{e:#}")),
+            Ok(_) => None,
+        };
+        if let Some(reason) = failure {
+            eprintln!(
+                "vitro: could not destroy {0}: {reason}; `vitro destroy {0}` will try again",
+                self.name
+            );
+        }
+        sshconfig::refresh_if_present(self.paths, self.config, &SysinfoProbe::new());
+    }
 }
 
 /// The image as this VM will run it.
