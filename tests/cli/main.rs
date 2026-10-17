@@ -412,12 +412,13 @@ fn exec_script_with_nothing_after_it_runs_in_the_only_vm() {
 }
 
 #[test]
-fn exec_script_refuses_a_file_that_is_not_there_before_copying() {
+fn exec_script_refuses_a_file_that_is_not_there_before_anything_else() {
+    // No VM and no ssh to be found either: the missing script is still what
+    // gets reported, since nothing else would matter until it exists.
     let sandbox = Sandbox::new();
-    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
 
     sandbox
-        .run(&["exec", "--script", "nope.sh", "linux"])
+        .run_with_env(&["exec", "--script", "nope.sh", "linux"], &[("PATH", "")])
         .failure()
         .stderr_contains("does not exist");
 }

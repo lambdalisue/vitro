@@ -171,6 +171,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
             let probe = SysinfoProbe::new();
             match &script {
                 Some(path) => {
+                    vitro::script::exists(path)?;
                     let (name, args) = store.split_optional_vm(&args, &probe)?;
                     let payload = exec::Payload::Script { path, args: &args };
                     exec::exec(&paths, &config, &name, payload, sync.as_deref(), prelude)
