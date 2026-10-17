@@ -155,7 +155,9 @@ built …/golden/linux-20260920-160437.qcow2 in 16s
 $ vitro run linux && vitro exec linux-7f3a2c uname -a
 ```
 
-`vitro` with no arguments prints what is running and what to do next. When
+`vitro` with no arguments prints what is running and what to do next,
+including any VM that has been up for over a day and is due to be promoted or
+destroyed. When
 something will not start, `vitro doctor` checks every prerequisite and prints a
 `→` line with the exact fix.
 

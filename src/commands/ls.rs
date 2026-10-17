@@ -247,7 +247,7 @@ fn table<const N: usize>(headers: [&str; N], rows: &[[String; N]]) -> String {
     out
 }
 
-fn humanize_duration(seconds: u64) -> String {
+pub(crate) fn humanize_duration(seconds: u64) -> String {
     let d = Duration::from_secs(seconds);
     let secs = d.as_secs();
     match secs {
