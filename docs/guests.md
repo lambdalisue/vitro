@@ -173,6 +173,22 @@ addresses its VMs. Giving it a path is refused rather than guessed at.
 A lume guest gets a longer default boot ceiling than a Linux one: it has to get
 an address and then open port 22, and those are not the same moment.
 
+### Working in a macOS guest
+
+- The account is the one lume's preset creates, and its `sudo` asks for the
+  password, which the preset sets to the account's name. So anything that needs
+  root has to be handed it — `vitro restart` refuses a macOS guest for that
+  reason, where a Linux guest's passwordless `sudo` lets it through.
+- The Command Line Tools (clang, git, make) are not installed, and their usual
+  installer is a dialog nobody can answer over SSH. `softwareupdate` offers
+  them instead once a marker file exists; `examples/provision/macos-devtools.sh`
+  does that, installs Rust and Homebrew, and hands sudo its password.
+- `vitro exec` gets a zsh that is not a login shell, so only `~/.zshenv` is
+  read. A tool that adds itself to PATH in `~/.zprofile`, as Homebrew's
+  instructions say, is found in `vitro ssh` and not in `vitro exec`.
+- `vitro wait --desktop` waits for the Dock, which runs once the preset's
+  automatic logon has reached the desktop.
+
 ## A toolchain in the image
 
 A golden image comes with nothing but the operating system, and most work in a
@@ -180,12 +196,13 @@ guest starts by installing the same few things. `provision` puts them into the
 image once, at build time, instead of into every VM — and into nobody's image
 who did not ask, since the Windows half adds about half an hour and 15 GB.
 
-Two scripts in `examples/provision/` do it for native builds:
+Scripts in `examples/provision/` do it for native builds:
 
 | Script | Installs |
 | --- | --- |
 | `linux-devtools.sh` | build-essential, pkg-config, Git, curl, and Rust through rustup |
 | `windows-devtools.ps1` | Git, the MSVC build tools and a Windows SDK for the guest's architecture, LLVM, and Rust through rustup |
+| `macos-devtools.sh` | the Command Line Tools, Rust through rustup, and Homebrew |
 
 ```toml
 [images.windows.build]
@@ -194,15 +211,17 @@ disk_size = "80G"
 provision = "~/src/vitro/examples/provision/windows-devtools.ps1"
 ```
 
-Both leave alone whatever is already installed, so they also bring a running VM
+Each leaves alone whatever is already installed, so it also brings a running VM
 up to date: `vitro exec --script examples/provision/windows-devtools.ps1
 windows`. Copy one and change it rather than pointing at it, if the project
 needs more; a Windows image takes a `.ps1`, `.cmd` or `.bat`.
 
 How far each has run: `linux-devtools.sh` from start to finish on a fresh
-Debian 13 guest. `windows-devtools.ps1` on a Windows 11 ARM64 guest that
-already had the build tools, LLVM and Rust, so of its installs only Git's has
-run; it has not yet provisioned an image during `build`.
+Debian 13 guest. `macos-devtools.sh` from start to finish, and again over its
+own result, on a macOS 26 guest from lume's `tahoe` preset. `windows-devtools.ps1`
+on a Windows 11 ARM64 guest that already had the build tools, LLVM and Rust, so
+of its installs only Git's has run; it has not yet provisioned an image during
+`build`.
 
 For anything installed later by hand, `promote` keeps it: it turns the VM into a
 golden image, and `run --golden <name>` starts from that image without editing
