@@ -1,6 +1,13 @@
 {
   description = "Disposable development VMs driven from a CLI";
 
+  # CI pushes main's builds here. Nix asks before trusting a flake's
+  # substituter, so this offers the cache rather than imposing it.
+  nixConfig = {
+    extra-substituters = [ "https://vitro.cachix.org" ];
+    extra-trusted-public-keys = [ "vitro.cachix.org-1:649aPpp2DJa0LqG49qsSUpoE50NavN5WGKwaLwyL+h8=" ];
+  };
+
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
     rust-overlay = {
