@@ -103,10 +103,16 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Run {
             image,
+            rm,
+            sync,
+            cwd,
+            env,
+            command,
             name,
             cpus,
             memory,
         }) => {
+            let prelude = parse_prelude(cwd, &env)?;
             let record = run::run(
                 &paths,
                 &config,
@@ -117,11 +123,27 @@ fn dispatch(cli: Cli) -> Result<i32> {
                 },
             )?;
             sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
-            println!(
+            let up = format!(
                 "{} is up: ssh {}@{} -p {}",
                 record.name, record.ssh_user, record.ssh_host, record.ssh_port
             );
-            Ok(0)
+            if command.is_empty() && !rm {
+                println!("{up}");
+                return Ok(0);
+            }
+            // stderr, so stdout carries the guest command's output and nothing else.
+            eprintln!("{up}");
+            run::then(
+                &paths,
+                &config,
+                &record.name,
+                run::Then {
+                    command,
+                    sync,
+                    prelude,
+                    remove: rm,
+                },
+            )
         }
 
         Some(Command::Exec {
@@ -131,13 +153,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
             args,
         }) => {
             // Before the VM is looked up, so a typo costs no connection.
-            let prelude = ssh::Prelude {
-                cwd,
-                env: env
-                    .iter()
-                    .map(|pair| ssh::parse_env(pair))
-                    .collect::<Result<_>>()?,
-            };
+            let prelude = parse_prelude(cwd, &env)?;
             let (name, command) = split_leading_vm(&paths, &args)?;
             exec::exec(&paths, &config, &name, &command, sync.as_deref(), prelude)
         }
@@ -294,6 +310,16 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
     }
+}
+
+fn parse_prelude(cwd: Option<String>, env: &[String]) -> Result<ssh::Prelude> {
+    Ok(ssh::Prelude {
+        cwd,
+        env: env
+            .iter()
+            .map(|pair| ssh::parse_env(pair))
+            .collect::<Result<_>>()?,
+    })
 }
 
 fn pick_vm(paths: &Paths, name: Option<&str>) -> Result<String> {

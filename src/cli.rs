@@ -35,9 +35,28 @@ pub enum Command {
     },
 
     /// Start a VM from a golden image
+    ///
+    /// With a command after `--`, run it in the new VM and exit with its exit
+    /// code. With `--rm`, destroy the VM afterwards, whatever happened; with
+    /// `--rm` and no command, open a shell and destroy the VM when it closes.
     Run {
         /// An `[images.*]` key from the configuration
         image: String,
+        /// Destroy the VM once the command or shell is done
+        #[arg(long)]
+        rm: bool,
+        /// Copy this host directory into the guest and run the command in it
+        #[arg(long, value_name = "DIR", requires = "command")]
+        sync: Option<PathBuf>,
+        /// Run the command in this guest directory
+        #[arg(long, value_name = "DIR", requires = "command")]
+        cwd: Option<String>,
+        /// Set a variable for the command; may be repeated
+        #[arg(long = "env", value_name = "NAME=VALUE", requires = "command")]
+        env: Vec<String>,
+        /// The command to run, after `--`
+        #[arg(last = true, value_name = "COMMAND")]
+        command: Vec<String>,
         /// Name the VM instead of generating one
         #[arg(long)]
         name: Option<String>,
@@ -229,6 +248,33 @@ mod tests {
         assert_eq!(cwd.as_deref(), Some("src"));
         assert_eq!(env, ["A=1", "B=2"]);
         assert_eq!(args, ["vm1", "ls", "--cwd"]);
+    }
+
+    #[test]
+    fn run_takes_its_command_after_the_separator() {
+        let cli = Cli::try_parse_from([
+            "vitro", "run", "--rm", "windows", "--", "cargo", "test", "--", "-q",
+        ])
+        .unwrap();
+
+        let Some(Command::Run {
+            image, rm, command, ..
+        }) = cli.command
+        else {
+            panic!("expected run");
+        };
+        assert_eq!(image, "windows");
+        assert!(rm);
+        assert_eq!(command, ["cargo", "test", "--", "-q"]);
+    }
+
+    #[test]
+    fn run_options_for_a_command_need_a_command() {
+        for flag in [["--sync", "."], ["--cwd", "src"], ["--env", "A=1"]] {
+            let mut args = vec!["vitro", "run", "linux"];
+            args.extend(flag);
+            assert!(Cli::try_parse_from(&args).is_err(), "{args:?}");
+        }
     }
 
     #[test]

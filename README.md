@@ -15,6 +15,13 @@ $ echo $?                     # the guest's exit code, not vitro's
 $ vitro destroy windows-7f3a2c
 ```
 
+Or all of it at once — start a fresh VM, send it this project, run the tests,
+and throw the VM away:
+
+```console
+$ vitro run --rm --sync . windows -- cargo test
+```
+
 ## What it is for
 
 Answering "does this actually work on that operating system?" when you do not
@@ -161,7 +168,11 @@ destroy  the overlay goes; the golden image is untouched
 ```
 
 A VM is only disposable if getting another one back is cheap, which is why
-those are two commands rather than one. `promote` runs the other way: it turns
+those are two commands rather than one. `run --rm <image> -- <command>` puts
+the cheap half to work: it starts a VM, runs the command, exits with the
+command's exit code, and destroys the VM whether the command passed, failed or
+was interrupted. Without a command, `run --rm` opens a shell and destroys the
+VM when the shell closes. `promote` runs the other way: it turns
 a VM you have set up into a new golden image, so the hour spent installing a
 toolchain is spent once.
 
@@ -171,7 +182,7 @@ toolchain is spent once.
 | ------------------------ | ---------------------------------------------------- |
 | `setup`                  | Get from nothing to a guest you can build            |
 | `build <image>`          | Build a golden image from installation media         |
-| `run <image>`            | Start a VM from a golden image (`--cpus`, `--memory`) |
+| `run <image> [-- <cmd>…]` | Start a VM, and run a command in it (`--rm`, `--sync`, `--cpus`, `--memory`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
@@ -197,7 +208,8 @@ for you. Where the table shows `[<vm>]`, the VM can be left out while only one
 is running.
 
 Exit codes are `0` success, `1` failure, `2` a bad command line — except
-`exec`, which returns whatever the guest's command returned.
+`exec` and `run … -- <cmd>`, which return whatever the guest's command
+returned.
 
 `exec --cwd <dir>` runs the command in a guest directory and `--env NAME=VALUE`
 sets a variable for it. vitro writes both in the guest shell's own syntax, so

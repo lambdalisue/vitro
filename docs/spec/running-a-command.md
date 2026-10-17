@@ -35,3 +35,14 @@ files are sent. Files already in the guest directory are overwritten; files
 removed on the host are not removed from the guest.
 
 If the copy fails, the command does not run.
+
+## In a VM started for it
+
+`vitro run <image> -- <command>` starts a VM and runs the command in it as
+`exec` would, taking the same `--sync`, `--cwd` and `--env`, and exits with the
+command's exit code. Its standard output carries only the command's output.
+
+With `--rm` the VM is destroyed once the command is done, whether it passed,
+failed, never started because the copy failed, or was interrupted with Ctrl-C.
+`--rm` without a command opens a shell instead and destroys the VM when it
+closes. Without `--rm` the VM is left running.
