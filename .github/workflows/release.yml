@@ -161,7 +161,9 @@ jobs:
       # the wrong target or a binary that will not start would otherwise reach
       # users first. Only the Linux x86_64 archive is fetched; the others come
       # from the same template and the same checksum files. QEMU is skipped
-      # because the formula's own code is what is under test, not QEMU's.
+      # because the formula's own code is what is under test, not QEMU's —
+      # which is also why the binary is run directly: `brew test` refuses a
+      # formula whose dependencies are not installed.
       - name: Verify the formula
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
@@ -172,7 +174,8 @@ jobs:
           mkdir -p "$(dirname "$tap")"
           ln -s "$PWD/tap" "$tap"
           brew install --ignore-dependencies lambdalisue/vitro/vitro
-          brew test lambdalisue/vitro/vitro
+          "$(brew --prefix)/bin/vitro" --version | grep -Fx "vitro ${TAG#v}"
+          test -s "$(brew --prefix)/share/fish/vendor_completions.d/vitro.fish"
       - name: Commit and push
         working-directory: tap
         env:
