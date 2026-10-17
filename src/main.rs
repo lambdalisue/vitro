@@ -48,6 +48,16 @@ fn init_tracing() {
 }
 
 fn dispatch(cli: Cli) -> Result<i32> {
+    if let Some(Command::Completions { shell }) = cli.command {
+        clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            "vitro",
+            &mut std::io::stdout().lock(),
+        );
+        return Ok(0);
+    }
+
     let paths = Paths::resolve()?;
     let config = load_config(&paths)?;
 
@@ -235,15 +245,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Doctor) => doctor::report(&paths, &config),
 
-        Some(Command::Completions { shell }) => {
-            clap_complete::generate(
-                shell,
-                &mut Cli::command(),
-                "vitro",
-                &mut std::io::stdout().lock(),
-            );
-            Ok(0)
-        }
+        Some(Command::Completions { .. }) => unreachable!("answered before the paths are resolved"),
 
         Some(Command::Screenshot { name, out }) => {
             let name = pick_vm(&paths, name.as_deref())?;
