@@ -160,12 +160,25 @@ fn dispatch(cli: Cli) -> Result<i32> {
             sync,
             cwd,
             env,
+            script,
             args,
         }) => {
             // Before the VM is looked up, so a typo costs no connection.
             let prelude = parse_prelude(cwd, &env)?;
-            let (name, command) = split_leading_vm(&paths, &args)?;
-            exec::exec(&paths, &config, &name, &command, sync.as_deref(), prelude)
+            let store = Store::new(paths.state_dir());
+            let probe = SysinfoProbe::new();
+            match &script {
+                Some(path) => {
+                    let (name, args) = store.split_optional_vm(&args, &probe)?;
+                    let payload = exec::Payload::Script { path, args: &args };
+                    exec::exec(&paths, &config, &name, payload, sync.as_deref(), prelude)
+                }
+                None => {
+                    let (name, command) = store.split_leading_vm(&args, &probe)?;
+                    let payload = exec::Payload::Command(&command);
+                    exec::exec(&paths, &config, &name, payload, sync.as_deref(), prelude)
+                }
+            }
         }
 
         Some(Command::Promote {

@@ -276,7 +276,7 @@ pub fn then(paths: &Paths, config: &Config, name: &str, then: Then) -> Result<i3
             paths,
             config,
             name,
-            &then.command,
+            exec::Payload::Command(&then.command),
             then.sync.as_deref(),
             then.prelude,
         )

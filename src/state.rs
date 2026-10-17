@@ -303,6 +303,21 @@ impl Store {
         Ok((self.resolve_or_sole(None, probe)?, words.to_vec()))
     }
 
+    /// [`Store::split_leading_vm`] for words that may be empty after the VM,
+    /// such as a script's arguments: a lone word that names a VM is the VM.
+    pub fn split_optional_vm(
+        &self,
+        words: &[String],
+        probe: &impl ProcessProbe,
+    ) -> Result<(String, Vec<String>)> {
+        if let [first, rest @ ..] = words {
+            if let Some(name) = self.find(first)? {
+                return Ok((name, rest.to_vec()));
+            }
+        }
+        Ok((self.resolve_or_sole(None, probe)?, words.to_vec()))
+    }
+
     /// [`Store::resolve`] when a name was given, and otherwise the one VM that
     /// is running.
     ///
@@ -783,6 +798,37 @@ mod tests {
             .to_string();
 
         assert!(err.contains("linux-a, linux-b"), "{err}");
+    }
+
+    #[test]
+    fn a_lone_word_that_names_a_vm_is_the_vm_when_nothing_has_to_follow() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 100))
+            .unwrap();
+
+        let (name, rest) = store
+            .split_optional_vm(&words("linux"), &FakeProbe::empty())
+            .unwrap();
+
+        assert_eq!(name, "linux-7f3a2c");
+        assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn with_no_words_at_all_the_only_running_vm_is_chosen() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::new(temp.path());
+        store
+            .save(&record_from("linux-7f3a2c", "linux", 100))
+            .unwrap();
+        let probe = FakeProbe::with(100, record("x").pid_start_time);
+
+        let (name, rest) = store.split_optional_vm(&[], &probe).unwrap();
+
+        assert_eq!(name, "linux-7f3a2c");
+        assert!(rest.is_empty());
     }
 
     #[test]

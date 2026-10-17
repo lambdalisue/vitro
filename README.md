@@ -257,6 +257,18 @@ command inside it. Only what `.gitignore` keeps is sent, so `target/` and
 $ vitro exec --sync . windows cargo test
 ```
 
+Anything that needs a pipeline, a loop or more than a line belongs in a script
+rather than on the command line. `exec --script` copies it in, runs it with the
+arguments that follow, and removes it; a Windows guest runs `.ps1` files with
+no execution policy in the way:
+
+```console
+$ vitro exec --script ./collect-logs.ps1 windows -Since 1h
+```
+
+On a Windows guest every `exec` sees `PATH` as it stands now, so a tool
+installed earlier in the session is found without restarting the guest.
+
 ## Testing a project
 
 A project can say once how it is tested, in a `vitro.toml` at its root:

@@ -21,6 +21,7 @@ pub mod media;
 pub mod process;
 pub mod qemu;
 pub mod qmp;
+pub mod script;
 pub mod seed;
 pub mod signals;
 pub mod ssh;

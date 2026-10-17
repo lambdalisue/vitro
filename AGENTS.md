@@ -82,6 +82,7 @@ Commits before this convention was adopted use Conventional Commits
 | `qemu` | `src/qemu.rs`, `src/qmp.rs` |
 | `lume` | `src/lume.rs` |
 | `project` | `src/project.rs`, `src/commands/test.rs` |
+| `script` | `src/script.rs` |
 | `ssh` | `src/ssh.rs` |
 | `sync` | `src/sync.rs` |
 | `image` | `src/image.rs`, `src/golden.rs`, `src/iso.rs`, `src/media.rs`, `src/seed.rs`, `src/unattend.rs` |

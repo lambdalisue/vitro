@@ -49,7 +49,7 @@ Absent this section, the image is a golden one somebody else produced and
 | `source` | A URL, a path, or `latest` (lume only). Omit it for an unattended Windows install and vitro uses whatever is in its media directory |
 | `sha256` | Checked after downloading. **Without it a cached file is reused unverified** |
 | `disk_size` | How large the guest's disk is made |
-| `provision` | A script run inside the guest after its first boot |
+| `provision` | A script run inside the guest after its first boot, before the image is saved; a non-zero exit fails the build. A Windows image takes a `.ps1`, `.cmd` or `.bat` |
 | `unattend` | Your own `autounattend.xml`, used whole instead of vitro's |
 | `virtio_iso` | Path or URL for the virtio drivers. Offered as a download when unset |
 | `unattended` | lume's own first-boot preset, such as `tahoe` |

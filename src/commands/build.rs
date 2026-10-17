@@ -196,6 +196,11 @@ pub struct Built {
 
 pub fn build(paths: &Paths, config: &Config, options: &Options) -> Result<Built> {
     let (image, spec) = config.buildable_image(&options.image)?;
+    // Before anything is downloaded or booted: finding out after an hour-long
+    // install that the guest cannot run the script wastes the hour.
+    if let Some(script) = &spec.provision {
+        crate::script::check(script, image.guest).context("provision script")?;
+    }
     if spec.kind == BuildKind::LumeIpsw {
         return build_lume(paths, config, image, spec);
     }
@@ -278,7 +283,7 @@ pub fn build(paths: &Paths, config: &Config, options: &Options) -> Result<Built>
     wait_for_guest(&tools.ssh, &target, timeout, pid, &dir)?;
 
     if let Some(script) = &spec.provision {
-        provision(&tools.ssh, &tools.scp, &target, script)?;
+        provision(&tools.ssh, &tools.scp, &target, image.guest, script)?;
     }
 
     if image.guest == Guest::Unix {
@@ -423,7 +428,7 @@ fn finish_lume(
         };
         let left = ssh::remaining(spec.build_timeout, booting.elapsed());
         ssh::wait_until_reachable(&ssh, &target, left, || true)?;
-        let provisioned = provision(&ssh, &scp, &target, script);
+        let provisioned = provision(&ssh, &scp, &target, image.guest, script);
         let _ = fs::remove_dir_all(&dir);
         provisioned?;
     }
@@ -872,33 +877,19 @@ fn provision(
     ssh_binary: &Path,
     scp_binary: &Path,
     target: &ssh::SshTarget,
+    guest: Guest,
     script: &Path,
 ) -> Result<()> {
-    if !script.exists() {
-        bail!("provision script {} does not exist", script.display());
-    }
-    let remote = "/tmp/vitro-provision";
-
-    let status = std::process::Command::new(scp_binary)
-        .args(ssh::scp_args(target, script, remote))
-        .status()
-        .with_context(|| format!("cannot run {}", scp_binary.display()))?;
-    if !status.success() {
-        bail!("cannot copy {} into the guest", script.display());
-    }
-
-    let code = ssh::run_passthrough(
+    let code = crate::script::run(
         ssh_binary,
+        scp_binary,
         target,
-        &ssh::SshOptions {
-            command: vec![
-                "sh".into(),
-                "-c".into(),
-                format!("chmod +x {remote} && {remote}"),
-            ],
-            ..ssh::SshOptions::default()
-        },
-    )?;
+        guest,
+        script,
+        &[],
+        ssh::SshOptions::default(),
+    )
+    .context("provision script")?;
     if code != 0 {
         bail!("the provision script exited with {code}");
     }
