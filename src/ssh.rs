@@ -287,6 +287,37 @@ fn quote(part: &str) -> String {
 }
 
 pub fn scp_args(target: &SshTarget, from: &Path, to_remote: &str) -> Vec<OsString> {
+    let mut args = scp_options(target);
+    args.push(from.to_path_buf().into_os_string());
+    args.push(OsString::from(format!(
+        "{}:{to_remote}",
+        target.destination()
+    )));
+    args
+}
+
+/// One side of a copy: a path on the host, or a path in the guest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CopyEnd {
+    Local(PathBuf),
+    /// Relative to the guest account's home unless absolute.
+    Guest(String),
+}
+
+/// `scp -r` from every source to the destination, directories included.
+pub fn copy_args(target: &SshTarget, sources: &[CopyEnd], destination: &CopyEnd) -> Vec<OsString> {
+    let mut args = scp_options(target);
+    args.push(OsString::from("-r"));
+    let end = |end: &CopyEnd| match end {
+        CopyEnd::Local(path) => path.clone().into_os_string(),
+        CopyEnd::Guest(path) => OsString::from(format!("{}:{path}", target.destination())),
+    };
+    args.extend(sources.iter().map(end));
+    args.push(end(destination));
+    args
+}
+
+fn scp_options(target: &SshTarget) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec![OsString::from("-F"), OsString::from("/dev/null")];
     for option in base_options(target) {
         args.push(OsString::from("-o"));
@@ -299,11 +330,6 @@ pub fn scp_args(target: &SshTarget, from: &Path, to_remote: &str) -> Vec<OsStrin
     // scp spells the port flag with a capital P.
     args.push(OsString::from("-P"));
     args.push(OsString::from(target.port.to_string()));
-    args.push(from.to_path_buf().into_os_string());
-    args.push(OsString::from(format!(
-        "{}:{to_remote}",
-        target.destination()
-    )));
     args
 }
 
@@ -732,6 +758,32 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("-F /dev/null"), "{line}");
+    }
+
+    #[test]
+    fn a_copy_is_recursive_and_names_the_guest_side_with_the_destination() {
+        let target = target();
+        let args = copy_args(
+            &target,
+            &[
+                CopyEnd::Local(PathBuf::from("src")),
+                CopyEnd::Local(PathBuf::from("Cargo.toml")),
+            ],
+            &CopyEnd::Guest("project".into()),
+        );
+        let line = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(line.contains("-r"), "{line}");
+        assert!(line.contains("-P 53422"), "{line}");
+        assert!(line.contains("-F /dev/null"), "{line}");
+        assert!(
+            line.ends_with("src Cargo.toml dev@127.0.0.1:project"),
+            "{line}"
+        );
     }
 
     #[cfg(unix)]

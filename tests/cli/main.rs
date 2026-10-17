@@ -294,6 +294,33 @@ fn exec_writes_the_directory_and_variables_in_front_of_the_command() {
     assert!(call.ends_with("-- cd src && A=1 make"), "{call}");
 }
 
+#[cfg(unix)]
+#[test]
+fn cp_hands_scp_the_vms_port_and_key_and_copies_recursively() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("scp", 0);
+
+    sandbox.run(&["cp", "src", ":project"]).success();
+
+    let call = sandbox.calls("scp").pop().expect("scp should have run");
+    assert!(call.contains("-P 53422"), "{call}");
+    assert!(call.contains("-r"), "{call}");
+    assert!(call.ends_with("src dev@127.0.0.1:project"), "{call}");
+}
+
+#[cfg(unix)]
+#[test]
+fn cp_returns_what_scp_returned() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("scp", 3);
+
+    let run = sandbox.run(&["cp", "linux:missing", "."]);
+
+    assert_eq!(run.code, 3, "stderr: {}", run.stderr);
+}
+
 #[test]
 fn a_malformed_variable_is_refused_before_any_vm_is_looked_up() {
     Sandbox::new()

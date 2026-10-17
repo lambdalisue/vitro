@@ -59,6 +59,15 @@ pub enum Command {
     /// Open an interactive shell in a VM
     Ssh { name: Option<String> },
 
+    /// Copy files and directories between the host and a VM
+    ///
+    /// A guest path is written `<vm>:<path>`, or `:<path>` while only one VM
+    /// is running; a relative one starts in the guest account's home.
+    Cp {
+        #[arg(required = true, num_args = 2.., value_name = "SOURCE]... [DEST")]
+        operands: Vec<String>,
+    },
+
     /// Stop a VM and delete its overlay
     Destroy {
         name: Option<String>,

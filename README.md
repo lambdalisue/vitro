@@ -174,6 +174,7 @@ toolchain is spent once.
 | `run <image>`            | Start a VM from a golden image                       |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
+| `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
 | `destroy <vm>` / `--all` | Stop a VM and delete its overlay                     |
 | `promote <vm>`           | Turn a running VM into a new golden image            |
 | `ls`                     | List VMs and golden images (`--json`, `--prune`)     |
@@ -208,8 +209,17 @@ $ vitro exec --cwd project --env RUST_BACKTRACE=1 windows cargo test
 
 ## Reaching a guest from other tools
 
+Copying is built in. A guest path is written `<vm>:<path>`, or `:<path>` while
+only one VM is running, and directories are copied whole:
+
+```console
+$ vitro cp ./src Cargo.toml windows:project
+$ vitro cp :project/target/release/app.exe .
+```
+
 The forwarded SSH port changes on every `run`, which is fine for `vitro exec`
-and useless for `scp`, `rsync`, a debugger or an editor's remote connection.
+and `vitro cp` and useless for `rsync`, a debugger or an editor's remote
+connection.
 
 ```console
 $ vitro ssh-config --write
