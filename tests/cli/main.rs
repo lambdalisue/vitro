@@ -792,6 +792,22 @@ fn exec_passes_the_guest_exit_code_through() {
 }
 
 #[test]
+fn a_completion_script_is_printed_for_every_supported_shell() {
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        Sandbox::new()
+            .run(&["completions", shell])
+            .success()
+            .stdout_contains("vitro")
+            .stdout_contains("destroy");
+    }
+}
+
+#[test]
+fn completions_for_an_unknown_shell_is_a_usage_error() {
+    Sandbox::new().run(&["completions", "tcsh"]).usage_error();
+}
+
+#[test]
 fn an_unknown_subcommand_is_a_usage_error() {
     Sandbox::new().run(&["summon"]).usage_error();
 }

@@ -193,6 +193,7 @@ toolchain is spent once.
 | `status [<vm>]`          | What is running, and what to do next (`--json`)      |
 | `keygen`                 | Create the SSH key vitro authorises guests with      |
 | `doctor`                 | Check everything `run` and `build` depend on         |
+| `completions <shell>`    | Print a completion script (bash, zsh, fish, …)       |
 | `ssh-config [<vm>]`      | Print an `ssh_config` block (`--write`)              |
 | `forward <vm> <port>…`   | Forward guest ports to the host                      |
 | `port [<vm>]`            | Print the SSH port and nothing else                  |

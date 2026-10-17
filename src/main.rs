@@ -2,7 +2,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use anyhow::{bail, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
@@ -234,6 +234,16 @@ fn dispatch(cli: Cli) -> Result<i32> {
         }
 
         Some(Command::Doctor) => doctor::report(&paths, &config),
+
+        Some(Command::Completions { shell }) => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "vitro",
+                &mut std::io::stdout().lock(),
+            );
+            Ok(0)
+        }
 
         Some(Command::Screenshot { name, out }) => {
             let name = pick_vm(&paths, name.as_deref())?;
