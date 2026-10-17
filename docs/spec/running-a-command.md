@@ -27,6 +27,18 @@ On a Windows guest the command sees `PATH` as the machine and user settings
 hold it at that moment, so a tool installed earlier in the VM's life is found
 without restarting the guest. An explicit `--env PATH=…` still wins.
 
+## Running a script from the host
+
+`--script <file>` runs a script kept on the host instead of a command: it is
+copied into the guest, run with the words after the VM as its arguments, and
+removed afterwards, and `exec` exits with the script's exit code. The VM can be
+left out as usual, and a lone word that names a VM is taken as the VM.
+
+A Unix guest runs any file, with `sh` when it has no `#!` line. A Windows guest
+chooses by extension — `.ps1` runs under PowerShell with no execution policy in
+the way, `.cmd` and `.bat` under cmd — and refuses any other file before
+anything is copied.
+
 ## Sending a directory first
 
 `--sync <dir>` copies a host directory into the guest before the command runs,

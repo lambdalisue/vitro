@@ -96,7 +96,16 @@ pub enum Command {
         /// Set a variable for the command; may be repeated
         #[arg(long = "env", value_name = "NAME=VALUE")]
         env: Vec<String>,
-        #[arg(trailing_var_arg = true, required = true, value_name = "VM] [COMMAND")]
+        /// Copy this host script into the guest, run it with the words after
+        /// the VM as its arguments, and remove it. A Windows guest takes
+        /// .ps1, .cmd or .bat
+        #[arg(long, value_name = "FILE")]
+        script: Option<PathBuf>,
+        #[arg(
+            trailing_var_arg = true,
+            required_unless_present = "script",
+            value_name = "VM] [COMMAND"
+        )]
         args: Vec<String>,
     },
 

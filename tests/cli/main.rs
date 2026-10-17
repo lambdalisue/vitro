@@ -365,6 +365,63 @@ fn a_failed_sync_does_not_run_the_command_against_a_stale_tree() {
     assert!(sandbox.calls("ssh").is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn exec_script_copies_the_file_runs_it_with_its_arguments_and_cleans_up() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    let script = sandbox.write_file("setup.sh", b"#!/bin/sh\necho hi\n");
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 0);
+
+    sandbox
+        .run(&[
+            "exec",
+            "--script",
+            script.to_str().unwrap(),
+            "linux",
+            "--fast",
+        ])
+        .success();
+
+    let scp = sandbox.calls("scp").pop().expect("scp should have run");
+    assert!(
+        scp.contains("setup.sh dev@127.0.0.1:.vitro-script-"),
+        "{scp}"
+    );
+    assert!(scp.ends_with(".sh"), "{scp}");
+    let ssh = sandbox.calls("ssh").pop().expect("ssh should have run");
+    assert!(ssh.contains("rm -f"), "{ssh}");
+    assert!(ssh.ends_with(" --fast"), "{ssh}");
+}
+
+#[cfg(unix)]
+#[test]
+fn exec_script_with_nothing_after_it_runs_in_the_only_vm() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    let script = sandbox.write_file("setup.sh", b"echo hi\n");
+    sandbox.fake_bin("ssh", 0);
+    sandbox.fake_bin("scp", 0);
+
+    sandbox
+        .run(&["exec", "--script", script.to_str().unwrap()])
+        .success();
+
+    assert_eq!(sandbox.calls("scp").len(), 1);
+}
+
+#[test]
+fn exec_script_refuses_a_file_that_is_not_there_before_copying() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+
+    sandbox
+        .run(&["exec", "--script", "nope.sh", "linux"])
+        .failure()
+        .stderr_contains("does not exist");
+}
+
 #[test]
 fn a_malformed_variable_is_refused_before_any_vm_is_looked_up() {
     Sandbox::new()

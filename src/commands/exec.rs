@@ -12,45 +12,72 @@ use crate::{process, ssh, tools, Config, Paths, Store, SysinfoProbe, VmRecord};
 
 pub const KNOWN_HOSTS: &str = "known_hosts";
 
+/// What `exec` runs in the guest.
+pub enum Payload<'a> {
+    /// Words handed to the guest's shell.
+    Command(&'a [String]),
+    /// A file on the host, copied in, run with these arguments, and removed.
+    Script { path: &'a Path, args: &'a [String] },
+}
+
 pub fn exec(
     paths: &Paths,
     config: &Config,
     name: &str,
-    command: &[String],
+    payload: Payload<'_>,
     sync: Option<&Path>,
     mut prelude: ssh::Prelude,
 ) -> Result<i32> {
     let (record, target, ssh_binary) = prepare(paths, config, name)?;
+    if let Payload::Script { path, .. } = payload {
+        // Before the sync: a script the guest cannot run should not cost a copy.
+        crate::script::check(path, record.guest)?;
+    }
+    let scp = || tools::resolve("scp", config.tools().scp.as_deref(), "tools.scp").map(|t| t.path);
 
     if let Some(dir) = sync {
-        let scp = tools::resolve("scp", config.tools().scp.as_deref(), "tools.scp")?.path;
-        let landed = crate::sync::sync(&ssh_binary, &scp, &target, record.guest, dir)?;
+        let landed = crate::sync::sync(&ssh_binary, &scp()?, &target, record.guest, dir)?;
         // An explicit `--cwd` still wins: it may name a directory inside the
         // synced tree, or somewhere else entirely.
         prelude.cwd.get_or_insert(landed);
     }
     prelude.fresh_path = true;
 
-    ssh::run_passthrough(
-        &ssh_binary,
-        &target,
-        &ssh::SshOptions {
-            // A pty and piped stdin cannot coexist: the pty never delivers
-            // EOF. Only ask for one when vitro's own stdin is a terminal, in
-            // which case there is nothing being piped in.
-            tty: if ssh::stdin_is_terminal() {
-                ssh::Tty::Yes
-            } else {
-                ssh::Tty::No
-            },
-            batch: true,
-            connect_timeout: None,
-            command: command.to_vec(),
-            quoting: record.guest.into(),
-            forwards: Vec::new(),
-            prelude,
+    let options = ssh::SshOptions {
+        // A pty and piped stdin cannot coexist: the pty never delivers EOF.
+        // Only ask for one when vitro's own stdin is a terminal, in which case
+        // there is nothing being piped in.
+        tty: if ssh::stdin_is_terminal() {
+            ssh::Tty::Yes
+        } else {
+            ssh::Tty::No
         },
-    )
+        batch: true,
+        connect_timeout: None,
+        command: Vec::new(),
+        quoting: record.guest.into(),
+        forwards: Vec::new(),
+        prelude,
+    };
+    match payload {
+        Payload::Command(command) => ssh::run_passthrough(
+            &ssh_binary,
+            &target,
+            &ssh::SshOptions {
+                command: command.to_vec(),
+                ..options
+            },
+        ),
+        Payload::Script { path, args } => crate::script::run(
+            &ssh_binary,
+            &scp()?,
+            &target,
+            record.guest,
+            path,
+            args,
+            options,
+        ),
+    }
 }
 
 pub fn interactive(paths: &Paths, config: &Config, name: &str) -> Result<i32> {
