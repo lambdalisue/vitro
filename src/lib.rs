@@ -32,6 +32,9 @@ pub mod tools;
 pub mod unattend;
 pub mod vnc;
 
+#[cfg(all(test, unix))]
+mod testing;
+
 pub use config::*;
 pub use paths::*;
 pub use project::*;
