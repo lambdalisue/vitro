@@ -48,10 +48,16 @@
           rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain (_: rust);
           package = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package;
+          # The source carries no tags, so a build names the commit it is made from.
+          rev = self.shortRev or self.dirtyShortRev or "unknown";
+          date =
+            let
+              d = self.lastModifiedDate or "19700101000000";
+            in
+            "${lib.substring 0 4 d}-${lib.substring 4 2 d}-${lib.substring 6 2 d}";
           build = {
             pname = "vitro";
-            # The source carries no tags, so a build names the commit it is made from.
-            version = "${package.version}-${self.shortRev or self.dirtyShortRev or "unknown"}";
+            version = "${package.version}-${rev}";
             src = lib.fileset.toSource {
               root = ./.;
               fileset = lib.fileset.unions [
@@ -69,6 +75,10 @@
             build
             // {
               cargoArtifacts = craneLib.buildDepsOnly build;
+              # What `vitro --version` prints instead of Cargo.toml's 0.0.0.
+              # Only here, not in `build`, so the dependency layer stays cached
+              # across commits.
+              VITRO_VERSION = "git-${rev} (${date})";
               nativeBuildInputs = [ pkgs.installShellFiles ];
               # The scripts come from the binary itself, so they can only be
               # made where it runs.
