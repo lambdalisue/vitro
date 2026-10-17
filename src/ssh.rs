@@ -139,6 +139,11 @@ impl Default for SshOptions {
 pub struct Prelude {
     pub cwd: Option<String>,
     pub env: Vec<(String, String)>,
+    /// Rebuild PATH from the registry first. Windows sshd hands every session
+    /// the PATH it started with, so without this a tool installed after boot
+    /// stays invisible until the guest restarts. A POSIX login shell reads its
+    /// profile on every connection, so there it means nothing.
+    pub fresh_path: bool,
 }
 
 /// Read `NAME=VALUE`.
@@ -253,6 +258,12 @@ fn compose(command: &[String], quoting: Quoting, prelude: &Prelude) -> String {
         }
         Quoting::Raw => {
             let mut line = String::new();
+            if prelude.fresh_path {
+                line.push_str(
+                    "$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + \
+                     [Environment]::GetEnvironmentVariable('Path','User'); ",
+                );
+            }
             if let Some(cwd) = &prelude.cwd {
                 line.push_str(&format!(
                     "Set-Location -LiteralPath {} -ErrorAction Stop; ",
@@ -635,7 +646,46 @@ mod tests {
                 ("RUST_BACKTRACE".into(), "1".into()),
                 ("GREETING".into(), "it's here".into()),
             ],
+            fresh_path: false,
         }
+    }
+
+    #[test]
+    fn a_powershell_guest_can_be_given_the_path_it_has_now_before_anything_else() {
+        // Before the variables, so an explicit --env PATH=... still wins.
+        let line = line(&SshOptions {
+            command: vec!["cargo".into(), "build".into()],
+            quoting: Quoting::Raw,
+            prelude: Prelude {
+                env: vec![("A".into(), "1".into())],
+                fresh_path: true,
+                ..Prelude::default()
+            },
+            ..SshOptions::default()
+        });
+
+        assert!(
+            line.ends_with(
+                "-- $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + \
+                 [Environment]::GetEnvironmentVariable('Path','User'); $env:A='1'; cargo build"
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_posix_guest_needs_no_path_refresh() {
+        // A POSIX login shell reads its profile on every connection already.
+        let line = line(&SshOptions {
+            command: vec!["make".into()],
+            prelude: Prelude {
+                fresh_path: true,
+                ..Prelude::default()
+            },
+            ..SshOptions::default()
+        });
+
+        assert!(line.ends_with("-- make"), "{line}");
     }
 
     #[test]

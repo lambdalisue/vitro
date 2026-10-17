@@ -23,6 +23,10 @@ before any VM is contacted.
 Both are written in the guest shell's own syntax, so the same `vitro exec` line
 means the same thing on every guest.
 
+On a Windows guest the command sees `PATH` as the machine and user settings
+hold it at that moment, so a tool installed earlier in the VM's life is found
+without restarting the guest. An explicit `--env PATH=…` still wins.
+
 ## Sending a directory first
 
 `--sync <dir>` copies a host directory into the guest before the command runs,

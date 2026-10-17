@@ -74,8 +74,8 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                     command: command.clone(),
                     sync: project.sync.clone(),
                     prelude: ssh::Prelude {
-                        cwd: None,
                         env: project.env.clone(),
+                        ..ssh::Prelude::default()
                     },
                     remove: true,
                 },
