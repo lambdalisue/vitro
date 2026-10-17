@@ -5,7 +5,8 @@
 //! no `sendkey` command — that name belongs to the human monitor, and QMP
 //! spells it `input-send-event` with an explicit press and release per key. And
 //! a press and release batched into one event arrives as a single HID report,
-//! which a guest UI ignores: a click has to be three separate calls.
+//! which a guest UI ignores: a click has to be three separate calls, and a
+//! wheel notch, which QEMU treats as a button, two.
 //!
 //! Unix sockets only. Windows hosts would need the named-pipe transport, which
 //! vitro does not implement; there a guest is stopped over SSH instead.
@@ -13,6 +14,8 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
+
+use crate::pointer::{self, Button, Wheel};
 
 // Everything below is the wire protocol itself, which only the Unix-socket
 // transport speaks. On Windows it would all be dead code, and dead code that
@@ -146,51 +149,148 @@ pub fn send_key(socket: &Path, keys: &[&str]) -> Result<()> {
     if keys.is_empty() {
         return Ok(());
     }
-    let presses: Vec<_> = keys.iter().map(|key| key_event(key, true)).collect();
-    execute(
-        socket,
-        "input-send-event",
-        Some(serde_json::json!({ "events": presses })),
-    )?;
+    send_events(socket, chord_events(keys, true))?;
     #[cfg(unix)]
     std::thread::sleep(KEY_HOLD);
-    let releases: Vec<_> = keys.iter().rev().map(|key| key_event(key, false)).collect();
-    execute(
-        socket,
-        "input-send-event",
-        Some(serde_json::json!({ "events": releases })),
-    )
+    send_events(socket, chord_events(keys, false))
+}
+
+/// Hold keys down while `action` runs, as a hand on the keyboard would while
+/// the other works the mouse: Shift with the wheel, Ctrl with a click.
+///
+/// The keys come up even when `action` fails, since a modifier left down
+/// would change everything typed into the guest afterwards.
+pub fn with_keys_held(
+    socket: &Path,
+    keys: &[&str],
+    action: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if keys.is_empty() {
+        return action();
+    }
+    send_events(socket, chord_events(keys, true))?;
+    lead();
+    let done = action();
+    lead();
+    let released = send_events(socket, chord_events(keys, false));
+    done.and(released)
+}
+
+/// How long held keys are down before the pointer moves, and after it stops.
+///
+/// The keyboard and the tablet are separate USB devices that the guest reads
+/// on its own schedule, so events sent close together can arrive in either
+/// order: with only a few milliseconds between them, a guest was seen to
+/// receive the wheel before the Shift that was pressed first.
+#[cfg(unix)]
+const MODIFIER_LEAD: Duration = Duration::from_millis(150);
+
+fn lead() {
+    #[cfg(unix)]
+    std::thread::sleep(MODIFIER_LEAD);
+}
+
+/// Presses in the order given, or releases in reverse, as fingers would:
+/// modifiers are released after the key they modify.
+fn chord_events(keys: &[&str], down: bool) -> Vec<serde_json::Value> {
+    let event = |key: &&str| key_event(key, down);
+    if down {
+        keys.iter().map(event).collect()
+    } else {
+        keys.iter().rev().map(event).collect()
+    }
 }
 
 /// The largest coordinate on either axis of QEMU's absolute pointer, the
 /// tablet: it spans the screen whatever the screen's size.
 pub const ABS_MAX: u32 = 0x7fff;
 
-/// Click the left button at `(x, y)`, in the tablet's coordinates.
+/// How long apart the clicks of a double click are, and the steps of a drag:
+/// well inside any guest's double-click interval, yet long enough that each
+/// event is its own HID report.
+#[cfg(unix)]
+const POINTER_GAP: Duration = Duration::from_millis(30);
+
+/// How many moves a drag is spread over.
+const DRAG_STEPS: u32 = 10;
+
+/// Put the pointer at `(x, y)`, in the tablet's coordinates.
+pub fn move_to(socket: &Path, x: u32, y: u32) -> Result<()> {
+    send_events(socket, move_events(x, y))
+}
+
+/// Click `button` at `(x, y)`, `count` times in a row, in the tablet's
+/// coordinates.
 ///
-/// Three calls — move, press, release — because a press and release batched
-/// with the move arrive as one HID report, which a guest UI ignores.
-pub fn click(socket: &Path, x: u32, y: u32) -> Result<()> {
-    let moved = serde_json::json!([
-        { "type": "abs", "data": { "axis": "x", "value": x } },
-        { "type": "abs", "data": { "axis": "y", "value": y } },
-    ]);
+/// The move, every press and every release are separate calls, because events
+/// batched together arrive as one HID report, which a guest UI ignores.
+pub fn click(socket: &Path, x: u32, y: u32, button: Button, count: u32) -> Result<()> {
+    move_to(socket, x, y)?;
+    for i in 0..count {
+        if i > 0 {
+            gap();
+        }
+        tap(socket, button.qemu_name())?;
+    }
+    Ok(())
+}
+
+/// Turn the wheel `count` notches at `(x, y)`, in the tablet's coordinates.
+///
+/// QEMU treats a notch as a button, so each is a press and a release.
+pub fn scroll(socket: &Path, x: u32, y: u32, wheel: Wheel, count: u32) -> Result<()> {
+    move_to(socket, x, y)?;
+    for i in 0..count {
+        if i > 0 {
+            gap();
+        }
+        tap(socket, wheel.qemu_name())?;
+    }
+    Ok(())
+}
+
+/// Hold `button` down at `from` and let go at `to`, in the tablet's
+/// coordinates, passing through the points between.
+pub fn drag(socket: &Path, from: (u32, u32), to: (u32, u32), button: Button) -> Result<()> {
+    move_to(socket, from.0, from.1)?;
+    send_events(socket, vec![button_event(button.qemu_name(), true)])?;
+    for (x, y) in pointer::travel(from, to, DRAG_STEPS) {
+        gap();
+        move_to(socket, x, y)?;
+    }
+    gap();
+    send_events(socket, vec![button_event(button.qemu_name(), false)])
+}
+
+fn tap(socket: &Path, button: &str) -> Result<()> {
+    for down in [true, false] {
+        send_events(socket, vec![button_event(button, down)])?;
+    }
+    Ok(())
+}
+
+fn gap() {
+    #[cfg(unix)]
+    std::thread::sleep(POINTER_GAP);
+}
+
+fn send_events(socket: &Path, events: Vec<serde_json::Value>) -> Result<()> {
     execute(
         socket,
         "input-send-event",
-        Some(serde_json::json!({ "events": moved })),
-    )?;
-    for down in [true, false] {
-        let button = serde_json::json!([
-            { "type": "btn", "data": { "down": down, "button": "left" } },
-        ]);
-        execute(
-            socket,
-            "input-send-event",
-            Some(serde_json::json!({ "events": button })),
-        )?;
-    }
-    Ok(())
+        Some(serde_json::json!({ "events": events })),
+    )
+}
+
+fn move_events(x: u32, y: u32) -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({ "type": "abs", "data": { "axis": "x", "value": x } }),
+        serde_json::json!({ "type": "abs", "data": { "axis": "y", "value": y } }),
+    ]
+}
+
+fn button_event(button: &str, down: bool) -> serde_json::Value {
+    serde_json::json!({ "type": "btn", "data": { "down": down, "button": button } })
 }
 
 fn key_event(key: &str, down: bool) -> serde_json::Value {
@@ -235,6 +335,50 @@ mod tests {
                 ("shift".to_string(), false),
             ]
         );
+    }
+
+    #[test]
+    fn held_keys_go_down_in_order_and_come_up_in_reverse() {
+        let names = |events: Vec<serde_json::Value>| -> Vec<(String, bool)> {
+            events
+                .iter()
+                .map(|e| {
+                    (
+                        e["data"]["key"]["data"].as_str().unwrap().to_string(),
+                        e["data"]["down"].as_bool().unwrap(),
+                    )
+                })
+                .collect()
+        };
+
+        assert_eq!(
+            names(chord_events(&["ctrl", "shift"], true)),
+            [("ctrl".to_string(), true), ("shift".to_string(), true)]
+        );
+        assert_eq!(
+            names(chord_events(&["ctrl", "shift"], false)),
+            [("shift".to_string(), false), ("ctrl".to_string(), false)]
+        );
+    }
+
+    #[test]
+    fn a_move_places_both_axes_of_the_tablet() {
+        assert_eq!(
+            move_events(10, 20),
+            [
+                serde_json::json!({ "type": "abs", "data": { "axis": "x", "value": 10 } }),
+                serde_json::json!({ "type": "abs", "data": { "axis": "y", "value": 20 } }),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wheel_notch_is_sent_as_a_button() {
+        let event = button_event(Wheel::Down.qemu_name(), true);
+
+        assert_eq!(event["type"], "btn");
+        assert_eq!(event["data"]["button"], "wheel-down");
+        assert_eq!(event["data"]["down"], true);
     }
 
     #[test]

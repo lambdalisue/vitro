@@ -234,8 +234,15 @@ without touching the configuration.
 | `inspect [<vm>]`         | Print the VM's record as JSON                        |
 | `screenshot [<vm>]`      | Save a picture of the guest's screen                 |
 | `key <vm> <chord>…`      | Press keys on the guest's keyboard (`shift-a`)       |
-| `click <vm> <x> <y>`     | Click at a pixel of the guest's screen               |
+| `click <vm> <x> <y>`     | Click at a pixel (`--button right`, `--count 2`)     |
+| `scroll <vm> <x> <y> up` | Turn the mouse wheel over a pixel (`down`, `--count`, `--with shift`) |
+| `hover <vm> <x> <y>`     | Leave the pointer over a pixel                       |
+| `drag <vm> <x> <y> <x> <y>` | Drag from one pixel to another (`--button`)    |
 | `launch [<vm>] <cmd>…`   | Start a program on the guest's desktop               |
+
+`click`, `scroll` and `drag` hold keys down meanwhile with `--with`, named as
+`key` names them: `--with ctrl` for a Ctrl-click, `--with shift` to scroll
+sideways in most programs.
 
 A VM can be named by its full name, by the image it was started from, or by
 any unambiguous prefix — `vitro exec windows cargo test` reaches the one

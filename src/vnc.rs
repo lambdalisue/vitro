@@ -1,5 +1,5 @@
-//! A minimal VNC client: enough to press keys and click on a lume guest, and
-//! to look at its screen.
+//! A minimal VNC client: enough to press keys and use the mouse on a lume
+//! guest, and to look at its screen.
 //!
 //! A lume guest has no QEMU monitor; the screen and keyboard Virtualization.
 //! framework offers from outside are its VNC server. Keys sent this way arrive
@@ -16,11 +16,21 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
+use crate::pointer::{self, Button, Wheel};
+
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long a key stays down. Down and up in the same instant read as no
-/// press at all to some guests.
+/// How long a key or a button stays down. Down and up in the same instant
+/// read as no press at all to some guests.
 const HOLD: Duration = Duration::from_millis(20);
+
+/// How long held keys are down before the pointer moves, and after it stops,
+/// so the guest has the modifier before the action it modifies, as it would
+/// from a hand on the keyboard.
+const MODIFIER_LEAD: Duration = Duration::from_millis(150);
+
+/// How many moves a drag is spread over.
+const DRAG_STEPS: u32 = 10;
 
 const SECURITY_NONE: u8 = 1;
 const SECURITY_VNC_AUTH: u8 = 2;
@@ -213,6 +223,29 @@ impl Session {
         }
         self.stream.flush()?;
         std::thread::sleep(HOLD);
+        self.release(keysyms)
+    }
+
+    /// Hold keys down while `action` runs, and let go in reverse afterwards,
+    /// even when `action` fails: a modifier left down would change
+    /// everything typed into the guest afterwards.
+    pub fn with_keys_held(
+        &mut self,
+        keysyms: &[u32],
+        action: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        for keysym in keysyms {
+            self.stream.write_all(&key_event(*keysym, true))?;
+        }
+        self.stream.flush()?;
+        std::thread::sleep(MODIFIER_LEAD);
+        let done = action(self);
+        std::thread::sleep(MODIFIER_LEAD);
+        let released = self.release(keysyms);
+        done.and(released)
+    }
+
+    fn release(&mut self, keysyms: &[u32]) -> Result<()> {
         for keysym in keysyms.iter().rev() {
             self.stream.write_all(&key_event(*keysym, false))?;
         }
@@ -220,13 +253,55 @@ impl Session {
         Ok(())
     }
 
-    /// Click the left button at `(x, y)`, in the screen's pixels.
-    pub fn click(&mut self, x: u16, y: u16) -> Result<()> {
-        for buttons in [0, 1, 0] {
-            self.stream.write_all(&pointer_event(buttons, x, y))?;
-            self.stream.flush()?;
-            std::thread::sleep(HOLD);
+    /// Put the pointer at `(x, y)`, in the screen's pixels.
+    pub fn move_to(&mut self, x: u16, y: u16) -> Result<()> {
+        self.pointer(0, x, y)
+    }
+
+    /// Click `button` at `(x, y)`, `count` times in a row, in the screen's
+    /// pixels.
+    pub fn click(&mut self, x: u16, y: u16, button: Button, count: u32) -> Result<()> {
+        self.tap(button.vnc_mask(), x, y, count)
+    }
+
+    /// Turn the wheel `count` notches at `(x, y)`, in the screen's pixels.
+    ///
+    /// RFB has no wheel of its own: a notch is a press and release of the
+    /// button its direction is mapped to.
+    pub fn scroll(&mut self, x: u16, y: u16, wheel: Wheel, count: u32) -> Result<()> {
+        self.tap(wheel.vnc_mask(), x, y, count)
+    }
+
+    /// Hold `button` down at `from` and let go at `to`, in the screen's
+    /// pixels, passing through the points between.
+    pub fn drag(&mut self, from: (u16, u16), to: (u16, u16), button: Button) -> Result<()> {
+        let mask = button.vnc_mask();
+        self.move_to(from.0, from.1)?;
+        self.pointer(mask, from.0, from.1)?;
+        let path = pointer::travel(
+            (u32::from(from.0), u32::from(from.1)),
+            (u32::from(to.0), u32::from(to.1)),
+            DRAG_STEPS,
+        );
+        for (x, y) in path {
+            self.pointer(mask, x as u16, y as u16)?;
         }
+        self.pointer(0, to.0, to.1)
+    }
+
+    fn tap(&mut self, mask: u8, x: u16, y: u16, count: u32) -> Result<()> {
+        self.move_to(x, y)?;
+        for _ in 0..count {
+            self.pointer(mask, x, y)?;
+            self.pointer(0, x, y)?;
+        }
+        Ok(())
+    }
+
+    fn pointer(&mut self, buttons: u8, x: u16, y: u16) -> Result<()> {
+        self.stream.write_all(&pointer_event(buttons, x, y))?;
+        self.stream.flush()?;
+        std::thread::sleep(HOLD);
         Ok(())
     }
 

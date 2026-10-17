@@ -19,6 +19,7 @@ pub mod jobs;
 pub mod keys;
 pub mod lume;
 pub mod media;
+pub mod pointer;
 pub mod process;
 pub mod qemu;
 pub mod qmp;

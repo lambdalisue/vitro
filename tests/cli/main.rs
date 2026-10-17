@@ -178,6 +178,41 @@ fn a_click_on_a_vm_without_a_monitor_says_why_rather_than_clicking_nothing() {
 }
 
 #[test]
+fn every_mouse_command_on_a_vm_without_a_monitor_says_why() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+
+    for args in [
+        &["scroll", "linux-7f3a2c", "10", "20", "down"][..],
+        &["hover", "linux-7f3a2c", "10", "20"],
+        &["drag", "linux-7f3a2c", "10", "20", "30", "40"],
+    ] {
+        sandbox
+            .run(args)
+            .failure()
+            .stderr_contains("monitor socket");
+    }
+}
+
+#[test]
+fn a_misspelt_key_to_hold_is_refused_before_the_vm_is_touched() {
+    // No VM exists at all: the key name has to be the first thing read, or a
+    // typo would surface only after the pointer had already moved.
+    Sandbox::new()
+        .run(&[
+            "scroll",
+            "linux-7f3a2c",
+            "10",
+            "20",
+            "down",
+            "--with",
+            "shfit",
+        ])
+        .failure()
+        .stderr_contains("no key is called");
+}
+
+#[test]
 fn no_arguments_reports_status_and_what_to_do_next() {
     Sandbox::new()
         .run(&[])
@@ -1245,6 +1280,9 @@ fn help_describes_the_whole_tool_not_just_the_finished_parts() {
         "screenshot",
         "key",
         "click",
+        "scroll",
+        "hover",
+        "drag",
         "launch",
         "doctor",
     ] {

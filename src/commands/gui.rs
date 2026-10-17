@@ -1,12 +1,13 @@
-//! `vitro screenshot`, `vitro key`, `vitro click` and `vitro launch` —
-//! checking that a window actually opens, and using it.
+//! `vitro screenshot`, `vitro key`, the mouse commands (`click`, `scroll`,
+//! `hover`, `drag`) and `vitro launch` — checking that a window actually
+//! opens, and using it.
 //!
 //! Between them these answer the one question a headless VM cannot otherwise
 //! be asked: did the program come up, and what does it look like? The
-//! picture, the keys and the clicks go through the VM's monitor rather than
+//! picture, the keys and the mouse go through the VM's monitor rather than
 //! through the guest — a QEMU guest's QMP socket, a lume guest's VNC server —
 //! so the picture works even when the guest is wedged at a firmware prompt
-//! with no network, and the keys and clicks arrive as a keyboard's and a
+//! with no network, and the keys and the mouse arrive as a keyboard's and a
 //! mouse's would.
 
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use crate::keys::Chord;
+use crate::pointer::{Button, Wheel};
 use crate::ssh::powershell_literal;
 use crate::{
     commands::exec, golden, lume, process, qmp, signals, ssh, tools, vnc, Backend, Config, Guest,
@@ -127,27 +129,134 @@ fn pace(index: usize, delay: Duration) -> Result<()> {
     signals::check()
 }
 
-/// Click the left button at `(x, y)`, in the pixels of the guest's screen as
-/// `vitro screenshot` shows it.
-pub fn click(paths: &Paths, config: &Config, name: &str, x: u32, y: u32) -> Result<()> {
+/// Click `button` at `(x, y)`, `count` times in a row, in the pixels of the
+/// guest's screen as `vitro screenshot` shows it, with the keys of `with`
+/// held down.
+pub fn click(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    at: (u32, u32),
+    button: Button,
+    count: u32,
+    with: Option<&str>,
+) -> Result<()> {
+    on_screen(
+        paths,
+        config,
+        name,
+        &[at],
+        with,
+        |socket, at| qmp::click(socket, at[0].0, at[0].1, button, count),
+        |session, at| session.click(at[0].0, at[0].1, button, count),
+    )
+}
+
+/// Turn the wheel `count` notches with the pointer at `(x, y)` and the keys of
+/// `with` held down — Shift for a sideways scroll in most toolkits.
+pub fn scroll(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    at: (u32, u32),
+    wheel: Wheel,
+    count: u32,
+    with: Option<&str>,
+) -> Result<()> {
+    on_screen(
+        paths,
+        config,
+        name,
+        &[at],
+        with,
+        |socket, at| qmp::scroll(socket, at[0].0, at[0].1, wheel, count),
+        |session, at| session.scroll(at[0].0, at[0].1, wheel, count),
+    )
+}
+
+/// Put the pointer at `(x, y)` and leave it there, for what only shows while
+/// it hovers.
+pub fn hover(paths: &Paths, config: &Config, name: &str, at: (u32, u32)) -> Result<()> {
+    on_screen(
+        paths,
+        config,
+        name,
+        &[at],
+        None,
+        |socket, at| qmp::move_to(socket, at[0].0, at[0].1),
+        |session, at| session.move_to(at[0].0, at[0].1),
+    )
+}
+
+/// Hold `button` down at `from`, move to `to` and let go there, with the keys
+/// of `with` held down throughout.
+pub fn drag(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    from: (u32, u32),
+    to: (u32, u32),
+    button: Button,
+    with: Option<&str>,
+) -> Result<()> {
+    on_screen(
+        paths,
+        config,
+        name,
+        &[from, to],
+        with,
+        |socket, at| qmp::drag(socket, at[0], at[1], button),
+        |session, at| session.drag(at[0], at[1], button),
+    )
+}
+
+/// Check that every point is on the guest's screen, then hand them to the
+/// way into this guest in the coordinates it takes — the tablet's for QEMU,
+/// pixels for VNC — with the keys of `with` held down meanwhile.
+///
+/// `with` is read before anything else, so a misspelt key never leaves the
+/// pointer moved and the action half done.
+fn on_screen(
+    paths: &Paths,
+    config: &Config,
+    name: &str,
+    points: &[(u32, u32)],
+    with: Option<&str>,
+    qemu: impl FnOnce(&Path, &[(u32, u32)]) -> Result<()>,
+    lume: impl FnOnce(&mut vnc::Session, &[(u16, u16)]) -> Result<()>,
+) -> Result<()> {
+    let held = with.map(Chord::parse).transpose()?;
     let record = running(paths, name)?;
     match record.backend {
         Backend::Qemu => {
             let socket = monitor(&record)?;
             // The tablet spans the screen, so the screen's size is needed to
             // place a pixel on it; a capture is the one place that says.
-            let dir = tempfile::tempdir()?;
-            let shot = dir.path().join("size.png");
-            qmp::screendump(socket, &shot)?;
-            let (width, height) = png_size(&shot)?;
-            check_inside(x, y, width, height)?;
-            qmp::click(socket, to_tablet(x, width), to_tablet(y, height))
+            let (width, height) = {
+                let dir = tempfile::tempdir()?;
+                let shot = dir.path().join("size.png");
+                qmp::screendump(socket, &shot)?;
+                png_size(&shot)?
+            };
+            for &(x, y) in points {
+                check_inside(x, y, width, height)?;
+            }
+            let points: Vec<_> = points
+                .iter()
+                .map(|&(x, y)| (to_tablet(x, width), to_tablet(y, height)))
+                .collect();
+            let keys = held.as_ref().map_or(&[][..], Chord::names);
+            qmp::with_keys_held(socket, keys, || qemu(socket, &points))
         }
         Backend::Lume => {
             let mut session = vnc::Session::connect(&vnc_target(config, &record)?)?;
             let (width, height) = session.size();
-            check_inside(x, y, u32::from(width), u32::from(height))?;
-            session.click(x as u16, y as u16)
+            for &(x, y) in points {
+                check_inside(x, y, u32::from(width), u32::from(height))?;
+            }
+            let points: Vec<_> = points.iter().map(|&(x, y)| (x as u16, y as u16)).collect();
+            let keysyms = held.as_ref().map(Chord::keysyms).unwrap_or_default();
+            session.with_keys_held(&keysyms, |session| lume(session, &points))
         }
     }
 }

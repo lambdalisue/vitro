@@ -56,9 +56,17 @@ monitor, and QMP spells it `input-send-event` with an explicit press and
 release per key — and a press and release batched into one event arrives as a
 single HID report, which a guest UI ignores.
 
-`click` places the pointer on QEMU's tablet, whose axes span the screen end to
-end rather than counting pixels, so a click first takes a capture to learn the
-screen's size.
+`click`, `scroll`, `hover` and `drag` place the pointer on QEMU's tablet, whose
+axes span the screen end to end rather than counting pixels, so each first
+takes a capture to learn the screen's size. QEMU treats a wheel notch as a
+button press, and the tablet reports only a vertical wheel: QEMU accepts
+`wheel-left` and `wheel-right` and the guest never sees them, and virtio's
+tablet drops them the same way. `scroll` therefore offers only `up` and
+`down`, and a sideways scroll is `--with shift`, which most toolkits read as
+one. Keys held with `--with` come up again even when the pointer action
+fails, since a modifier left down would change everything typed afterwards. A drag passes through points between its
+ends with the button held, because a press here and a release there with
+nothing between reads to many toolkits as a click.
 
 A lume guest has no QEMU monitor. Its screen and keyboard are reached through
 the VNC server Virtualization.framework offers, at an address and password
