@@ -29,6 +29,7 @@ pub fn exec(
         // synced tree, or somewhere else entirely.
         prelude.cwd.get_or_insert(landed);
     }
+    prelude.fresh_path = true;
 
     ssh::run_passthrough(
         &ssh_binary,

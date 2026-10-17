@@ -344,6 +344,7 @@ fn parse_prelude(cwd: Option<String>, env: &[String]) -> Result<ssh::Prelude> {
             .iter()
             .map(|pair| ssh::parse_env(pair))
             .collect::<Result<_>>()?,
+        ..ssh::Prelude::default()
     })
 }
 
