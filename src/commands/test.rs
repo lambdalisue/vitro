@@ -73,6 +73,7 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                 &record.name,
                 run::Then {
                     command: command.clone(),
+                    script: None,
                     sync: project.sync.clone(),
                     prelude: ssh::Prelude {
                         env: project.env.clone(),

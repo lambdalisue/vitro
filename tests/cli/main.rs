@@ -716,6 +716,49 @@ fn run_rm_with_a_command_returns_its_exit_code_and_leaves_nothing_behind() {
 
 #[cfg(unix)]
 #[test]
+fn run_rm_with_a_script_runs_it_with_its_arguments_and_leaves_nothing_behind() {
+    let sandbox = sandbox_with_a_linux_image();
+    // Answers the readiness probe, then fails the script with a code of its own.
+    sandbox.fake_bin_with("ssh", r#"case "$*" in *"-- exit") exit 0 ;; esac; exit 4"#);
+    let script = sandbox.write_file("setup.sh", b"echo hi\n");
+
+    let run = sandbox.run(&[
+        "run",
+        "--rm",
+        "--script",
+        script.to_str().unwrap(),
+        "linux",
+        "--",
+        "--fast",
+    ]);
+
+    assert_eq!(run.code, 4, "stderr: {}", run.stderr);
+    let scp = sandbox
+        .calls("scp")
+        .pop()
+        .expect("the script should be copied");
+    assert!(scp.contains(":.vitro-script-"), "{scp}");
+    let last = sandbox.calls("ssh").pop().unwrap();
+    assert!(last.ends_with(" --fast"), "{last}");
+    assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
+}
+
+#[cfg(unix)]
+#[test]
+fn run_with_a_missing_script_boots_nothing() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox
+        .run(&["run", "--rm", "--script", "nope.sh", "linux"])
+        .failure()
+        .stderr_contains("does not exist");
+
+    assert!(sandbox.calls("qemu-img").is_empty());
+}
+
+#[cfg(unix)]
+#[test]
 fn run_rm_destroys_the_vm_even_when_the_sync_fails() {
     let sandbox = sandbox_with_a_linux_image();
     sandbox.fake_bin("ssh", 0);

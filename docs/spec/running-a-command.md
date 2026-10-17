@@ -60,6 +60,9 @@ If the copy fails, the command does not run.
 `vitro run <image> -- <command>` starts a VM and runs the command in it as
 `exec` would, taking the same `--sync`, `--cwd` and `--env`, and exits with the
 command's exit code. Its standard output carries only the command's output.
+`--script <file>` runs a host script there instead, with the words after `--`
+as its arguments; a script the guest could not run is refused before the VM
+starts.
 
 With `--rm` the VM is destroyed once the command is done, whether it passed,
 failed, never started because the copy failed, or was interrupted with Ctrl-C.

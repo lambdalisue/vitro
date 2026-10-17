@@ -211,7 +211,7 @@ without touching the configuration.
 | ------------------------ | ---------------------------------------------------- |
 | `setup`                  | Get from nothing to a guest you can build            |
 | `build <image>`          | Build a golden image from installation media         |
-| `run <image> [-- <cmd>…]` | Start a VM, and run a command in it (`--rm`, `--sync`, `--cpus`, `--memory`, `--golden`) |
+| `run <image> [-- <cmd>…]` | Start a VM, and run a command or `--script` in it (`--rm`, `--sync`, `--cpus`, `--memory`, `--golden`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |
