@@ -8,6 +8,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 
@@ -38,29 +39,73 @@ pub fn guest_dir(dir: &Path) -> Result<String> {
 /// What `.gitignore` (and `.ignore`, and `.git/info/exclude`) leave out stays
 /// out, whether or not the directory is a Git checkout. Hidden files go in:
 /// `.cargo/config.toml` is part of a build. `.git` itself does not.
-pub fn archive(dir: &Path, root: &str, out: &Path) -> Result<()> {
+///
+/// A symbolic link to something inside the directory goes in as a copy of
+/// what it points at, under the link's own name, so a build that reaches a
+/// file through the link still finds it. A link to anything outside is left
+/// out and returned, because the guest runs whatever the project's command
+/// does, and a link to `~/.ssh` in a cloned repository must not carry the key
+/// into it. So is a link into `.git`, one whose target is gone, and one that
+/// would contain itself.
+/// Links are never sent as links, since unpacking one on Windows needs a
+/// privilege the guest account does not have.
+///
+/// Links are followed by the walker itself rather than by hand, so a link to
+/// a directory meets `.gitignore` as the directory it is: `/cache/` leaves out
+/// a `cache` link too.
+pub fn archive(dir: &Path, root: &str, out: &Path) -> Result<Vec<PathBuf>> {
     let file = File::create(out).with_context(|| format!("cannot create {}", out.display()))?;
     let mut builder = tar::Builder::new(file);
     builder.mode(tar::HeaderMode::Deterministic);
+    let inside = dir
+        .canonicalize()
+        .with_context(|| format!("cannot read {}", dir.display()))?;
+    let refused = Arc::new(Mutex::new(Vec::new()));
 
     let walker = ignore::WalkBuilder::new(dir)
         .hidden(false)
         .require_git(false)
         .git_global(false)
         .follow_links(true)
-        .filter_entry(|entry| entry.file_name() != ".git")
+        .filter_entry({
+            let refused = Arc::clone(&refused);
+            move |entry| {
+                if entry.file_name() == ".git" {
+                    return false;
+                }
+                if !entry.path_is_symlink() || stays_inside(entry.path(), &inside) {
+                    return true;
+                }
+                if let Ok(mut refused) = refused.lock() {
+                    refused.push(entry.path().to_path_buf());
+                }
+                false
+            }
+        })
         .build();
+    let mut skipped = Vec::new();
     for entry in walker {
-        let entry = entry.with_context(|| format!("cannot read {}", dir.display()))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => match unfollowable_link(&e) {
+                Some(link) => {
+                    skipped.push(link);
+                    continue;
+                }
+                None => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
+            },
+        };
         let path = entry.path();
         let relative = path.strip_prefix(dir).unwrap_or(path);
         let name = archive_name(root, relative);
-        let kind = entry.file_type();
-        if kind.is_some_and(|k| k.is_dir()) {
+        let Some(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
             builder
                 .append_dir(&name, path)
                 .with_context(|| format!("cannot archive {}", path.display()))?;
-        } else if kind.is_some_and(|k| k.is_file()) {
+        } else if kind.is_file() {
             builder
                 .append_path_with_name(path, &name)
                 .with_context(|| format!("cannot archive {}", path.display()))?;
@@ -69,7 +114,40 @@ pub fn archive(dir: &Path, root: &str, out: &Path) -> Result<()> {
     builder
         .into_inner()
         .and_then(|file| file.sync_all())
-        .with_context(|| format!("cannot write {}", out.display()))
+        .with_context(|| format!("cannot write {}", out.display()))?;
+
+    skipped.extend(refused.lock().map(|r| r.clone()).unwrap_or_default());
+    skipped.sort();
+    Ok(skipped)
+}
+
+/// Whether a link leads somewhere inside the project and outside its `.git`.
+fn stays_inside(link: &Path, inside: &Path) -> bool {
+    link.canonicalize().is_ok_and(|target| {
+        target
+            .strip_prefix(inside)
+            .is_ok_and(|rest| !rest.components().any(|part| part.as_os_str() == ".git"))
+    })
+}
+
+/// The link at fault when the walker stopped at one it cannot follow: a link
+/// back into a directory it is already inside, or one whose target is gone.
+/// Either is left out of the archive rather than failing the whole sync.
+fn unfollowable_link(error: &ignore::Error) -> Option<PathBuf> {
+    fn find(error: &ignore::Error, path: Option<&Path>) -> Option<PathBuf> {
+        match error {
+            ignore::Error::Loop { child, .. } => Some(child.clone()),
+            ignore::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                path.filter(|path| path.is_symlink()).map(Path::to_path_buf)
+            }
+            ignore::Error::WithPath { path, err } => find(err, Some(path)),
+            ignore::Error::WithDepth { err, .. } | ignore::Error::WithLineNumber { err, .. } => {
+                find(err, path)
+            }
+            _ => None,
+        }
+    }
+    find(error, None)
 }
 
 /// `/`-separated whatever the host, because that is what tar means.
@@ -110,7 +188,13 @@ pub fn sync(
     let root = guest_dir(dir)?;
     let scratch = tempfile::tempdir().context("cannot create a temporary directory")?;
     let local = scratch.path().join(ARCHIVE);
-    archive(dir, &root, &local)?;
+    for link in archive(dir, &root, &local)? {
+        eprintln!(
+            "vitro: not sending {}: it links to something outside {}",
+            link.display(),
+            dir.display()
+        );
+    }
 
     let status = std::process::Command::new(scp_binary)
         .args(ssh::scp_args(target, &local, ARCHIVE))
@@ -191,6 +275,84 @@ mod tests {
                 "proj/src/main.rs",
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_sent_as_what_it_points_at_only_when_that_stays_inside_the_project() {
+        use std::os::unix::fs::symlink;
+
+        let project = project();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("id_ed25519"), "secret").unwrap();
+        let root = project.path();
+        symlink(root.join("src/main.rs"), root.join("main-link.rs")).unwrap();
+        symlink(outside.path().join("id_ed25519"), root.join("key")).unwrap();
+        symlink(root.join("src"), root.join("src-link")).unwrap();
+        symlink(root, root.join("src/up")).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let archive_path = out.path().join("a.tar");
+
+        let mut skipped = archive(root, "proj", &archive_path).unwrap();
+
+        let names = entries(&archive_path);
+        for wanted in ["proj/main-link.rs", "proj/src-link/main.rs"] {
+            assert!(names.contains(&wanted.to_string()), "{wanted}: {names:?}");
+        }
+        assert!(
+            !names.iter().any(|n| n.starts_with("proj/key")),
+            "{names:?}"
+        );
+        assert!(!names.iter().any(|n| n.ends_with("/up")), "{names:?}");
+        skipped.sort();
+        assert_eq!(
+            skipped,
+            [
+                root.join("key"),
+                root.join("src/up"),
+                root.join("src-link/up")
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_directory_meets_gitignore_as_a_directory_and_never_reaches_into_git() {
+        use std::os::unix::fs::symlink;
+
+        let project = project();
+        let root = project.path();
+        fs::write(root.join(".gitignore"), "/target\n/cache/\n").unwrap();
+        symlink(root.join("src"), root.join("cache")).unwrap();
+        symlink(root.join(".git"), root.join("history")).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let archive_path = out.path().join("a.tar");
+
+        let skipped = archive(root, "proj", &archive_path).unwrap();
+
+        let names = entries(&archive_path);
+        assert!(
+            !names.iter().any(|n| n.starts_with("proj/cache")),
+            "{names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("proj/history")),
+            "{names:?}"
+        );
+        assert_eq!(skipped, [root.join("history")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_is_left_out_rather_than_failing_the_sync() {
+        let project = project();
+        let root = project.path();
+        std::os::unix::fs::symlink(root.join("gone"), root.join("dangling")).unwrap();
+        let out = tempfile::tempdir().unwrap();
+
+        let skipped = archive(root, "proj", &out.path().join("a.tar")).unwrap();
+
+        assert_eq!(skipped, [root.join("dangling")]);
     }
 
     #[test]

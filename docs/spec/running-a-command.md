@@ -31,7 +31,10 @@ runs inside it unless `--cwd` says otherwise.
 
 What `.gitignore`, `.ignore` and `.git/info/exclude` leave out is not sent,
 whether or not the directory is a Git checkout, and neither is `.git`. Hidden
-files are sent. Files already in the guest directory are overwritten; files
+files are sent. A symbolic link to a file or directory inside the directory
+arrives as a copy of what it points at, and meets `.gitignore` as what it
+points at; a link to anything outside the directory, into `.git`, to nothing,
+or one that would contain itself, is not sent, and vitro says so. Files already in the guest directory are overwritten; files
 removed on the host are not removed from the guest.
 
 If the copy fails, the command does not run.

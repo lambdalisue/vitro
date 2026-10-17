@@ -308,6 +308,9 @@ pub enum CopyEnd {
 pub fn copy_args(target: &SshTarget, sources: &[CopyEnd], destination: &CopyEnd) -> Vec<OsString> {
     let mut args = scp_options(target);
     args.push(OsString::from("-r"));
+    // The operands are the user's file names, and one that starts with `-`
+    // would otherwise be taken as an option — `-oProxyCommand=` runs a command.
+    args.push(OsString::from("--"));
     let end = |end: &CopyEnd| match end {
         CopyEnd::Local(path) => path.clone().into_os_string(),
         CopyEnd::Guest(path) => OsString::from(format!("{}:{path}", target.destination())),
@@ -781,9 +784,26 @@ mod tests {
         assert!(line.contains("-P 53422"), "{line}");
         assert!(line.contains("-F /dev/null"), "{line}");
         assert!(
-            line.ends_with("src Cargo.toml dev@127.0.0.1:project"),
+            line.ends_with("-- src Cargo.toml dev@127.0.0.1:project"),
             "{line}"
         );
+    }
+
+    #[test]
+    fn a_source_named_like_an_option_stays_a_file_name() {
+        // `-oProxyCommand=…` read as an option would run a command on the host.
+        let args = copy_args(
+            &target(),
+            &[CopyEnd::Local(PathBuf::from("-oProxyCommand=touch pwned"))],
+            &CopyEnd::Guest(String::new()),
+        );
+
+        let separator = args.iter().position(|a| a == "--").expect("a separator");
+        let source = args
+            .iter()
+            .position(|a| a == "-oProxyCommand=touch pwned")
+            .unwrap();
+        assert!(separator < source, "{args:?}");
     }
 
     #[cfg(unix)]

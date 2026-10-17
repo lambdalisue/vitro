@@ -58,7 +58,9 @@ $ vitro destroy windows
   `vitro exec cargo test`.
 - `--cwd` and `--env NAME=VALUE` are written in the guest shell's syntax. On a
   Windows guest the command itself runs in PowerShell, so write it in
-  PowerShell (`Get-ChildItem`, `$env:PATH`), not in POSIX sh.
+  PowerShell (`Get-ChildItem`, `$env:PATH`), not in POSIX sh. There, `exit`
+  straight after a cmdlet that prints a table discards that table: write
+  `Get-Location | Out-String; exit 7`, not `Get-Location; exit 7`.
 - Always destroy what you started. `vitro status` flags a VM that has been up
   for more than a day.
 
