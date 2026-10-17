@@ -120,7 +120,7 @@ pub fn run(paths: &Paths, config: &Config) -> Vec<Check> {
     checks.push(binary("ssh", cfg.ssh.as_deref(), "tools.ssh"));
     checks.push(binary("scp", cfg.scp.as_deref(), "tools.scp"));
 
-    checks.push(ssh_key(paths));
+    checks.extend(keys(paths, config).iter().map(|key| ssh_key(key)));
     checks.push(include_line(paths));
     checks.push(state_dir(paths));
     checks.extend(images(paths, config, host.as_ref().ok()));
@@ -259,8 +259,19 @@ fn accelerator_device(wanted: &str) -> Result<(), String> {
         .map_err(|e| format!("/dev/kvm cannot be opened for reading and writing: {e}"))
 }
 
-fn ssh_key(paths: &Paths) -> Check {
-    let key = paths.ssh_key();
+/// The keys worth checking: whichever ones the configured images present, or
+/// the default when there are no images yet.
+fn keys(paths: &Paths, config: &Config) -> Vec<PathBuf> {
+    let mut keys: Vec<PathBuf> = config.images().map(|image| image.ssh_key.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    if keys.is_empty() {
+        keys.push(paths.ssh_key());
+    }
+    keys
+}
+
+fn ssh_key(key: &Path) -> Check {
     if !key.exists() {
         return Check::fail(
             "ssh key",
@@ -271,7 +282,7 @@ fn ssh_key(paths: &Paths) -> Check {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&key) {
+        if let Ok(meta) = std::fs::metadata(key) {
             let mode = meta.permissions().mode() & 0o777;
             if mode & 0o077 != 0 {
                 return Check::fail(
@@ -595,11 +606,37 @@ mod tests {
     }
 
     #[test]
+    fn the_key_checked_is_the_one_the_images_use() {
+        // The configured key works for run and build, so failing on a default
+        // nobody uses would be a check people learn to ignore.
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::from_env(&Default::default(), temp.path());
+        let config = Config::parse(
+            "[defaults]\nssh_user = \"dev\"\nssh_key = \"~/keys/vitro\"\n\
+             [images.linux]\ngolden = \"/srv/linux.qcow2\"\n\
+             [images.other]\ngolden = \"/srv/other.qcow2\"\n",
+            temp.path(),
+            &paths.ssh_key(),
+        )
+        .unwrap();
+
+        assert_eq!(keys(&paths, &config), [temp.path().join("keys/vitro")]);
+    }
+
+    #[test]
+    fn with_no_images_the_default_key_is_checked() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::from_env(&Default::default(), temp.path());
+
+        assert_eq!(keys(&paths, &Config::default()), [paths.ssh_key()]);
+    }
+
+    #[test]
     fn a_missing_ssh_key_is_reported_with_the_command_that_makes_one() {
         let temp = tempfile::tempdir().unwrap();
         let paths = Paths::from_env(&Default::default(), temp.path());
 
-        let check = ssh_key(&paths);
+        let check = ssh_key(&paths.ssh_key());
 
         assert_eq!(check.level, Level::Fail);
         // The command vitro has, not one the reader has to assemble out of an
@@ -619,7 +656,7 @@ mod tests {
         std::fs::write(&key, "key").unwrap();
         std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let check = ssh_key(&paths);
+        let check = ssh_key(&key);
 
         assert_eq!(check.level, Level::Fail);
         assert!(check.fix.unwrap().contains("chmod 600"));
