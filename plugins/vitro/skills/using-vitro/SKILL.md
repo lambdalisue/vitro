@@ -131,5 +131,9 @@ command naming `git`.
   tens of minutes (Windows) and may need an installer the user must download.
 - Do not use `destroy --all` unless every VM is yours to destroy.
 - Do not pass `--graceful` to `destroy`; the default forced stop is intended.
-- GUI commands (`screenshot`, `key`, `click`, `launch`) are for checking
-  something on the guest's screen; prefer `exec` for anything a shell can do.
+- GUI commands (`screenshot`, `key`, `click`, `scroll`, `hover`, `drag`,
+  `launch`) are for checking something on the guest's screen; prefer `exec`
+  for anything a shell can do.
+- Do not run `vitro key shift` before a `click` or `scroll` to hold a
+  modifier: `key` lets go at once. Pass `--with shift` (or `ctrl`, `alt`, …)
+  to the mouse command; `scroll … down --with shift` scrolls sideways.

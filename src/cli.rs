@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::pointer::{Button, Wheel};
 use crate::ByteSize;
 
 #[derive(Debug, Parser)]
@@ -281,10 +282,58 @@ pub enum Command {
         delay: u64,
     },
 
-    /// Click the left mouse button on the guest's screen
+    /// Click a mouse button on the guest's screen
     ///
     /// `x` and `y` are pixels of the screen as `vitro screenshot` saves it.
-    Click { name: String, x: u32, y: u32 },
+    Click {
+        name: String,
+        x: u32,
+        y: u32,
+        #[arg(long, value_enum, default_value_t = Button::Left)]
+        button: Button,
+        /// Clicks in a row: 2 is a double click
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
+        /// Keys to hold down meanwhile, named as `vitro key` names them:
+        /// `shift`, `ctrl-alt`
+        #[arg(long, value_name = "CHORD")]
+        with: Option<String>,
+    },
+
+    /// Turn the mouse wheel with the pointer over a pixel of the guest's screen
+    Scroll {
+        name: String,
+        x: u32,
+        y: u32,
+        #[arg(value_enum)]
+        direction: Wheel,
+        /// Notches to turn
+        #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
+        count: u32,
+        /// Keys to hold down meanwhile, named as `vitro key` names them:
+        /// `shift`, `ctrl-alt`
+        #[arg(long, value_name = "CHORD")]
+        with: Option<String>,
+    },
+
+    /// Move the mouse pointer over a pixel of the guest's screen and leave it
+    Hover { name: String, x: u32, y: u32 },
+
+    /// Drag with a mouse button held, from one pixel of the guest's screen to
+    /// another
+    Drag {
+        name: String,
+        from_x: u32,
+        from_y: u32,
+        to_x: u32,
+        to_y: u32,
+        #[arg(long, value_enum, default_value_t = Button::Left)]
+        button: Button,
+        /// Keys to hold down meanwhile, named as `vitro key` names them:
+        /// `shift`, `ctrl-alt`
+        #[arg(long, value_name = "CHORD")]
+        with: Option<String>,
+    },
 
     /// Start a program on the guest's desktop
     Launch {
@@ -411,6 +460,101 @@ mod tests {
         assert_eq!(name, "vm1");
         assert_eq!(chords, ["shift_r", "shift-k", "ret"]);
         assert_eq!(delay, 80);
+    }
+
+    #[test]
+    fn a_click_is_one_press_of_the_left_button_unless_told_otherwise() {
+        let cli = Cli::try_parse_from(["vitro", "click", "vm1", "10", "20"]).unwrap();
+
+        let Some(Command::Click { button, count, .. }) = cli.command else {
+            panic!("expected click");
+        };
+        assert_eq!(button, Button::Left);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_click_takes_another_button_and_a_count() {
+        let cli = Cli::try_parse_from([
+            "vitro", "click", "vm1", "10", "20", "--button", "right", "--count", "2",
+        ])
+        .unwrap();
+
+        let Some(Command::Click { button, count, .. }) = cli.command else {
+            panic!("expected click");
+        };
+        assert_eq!(button, Button::Right);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn a_click_or_a_scroll_of_nothing_is_refused() {
+        assert!(Cli::try_parse_from(["vitro", "click", "vm1", "1", "2", "--count", "0"]).is_err());
+        assert!(
+            Cli::try_parse_from(["vitro", "scroll", "vm1", "1", "2", "up", "--count", "0"])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a_scroll_names_its_direction() {
+        let cli = Cli::try_parse_from(["vitro", "scroll", "vm1", "10", "20", "down"]).unwrap();
+
+        let Some(Command::Scroll {
+            direction, count, ..
+        }) = cli.command
+        else {
+            panic!("expected scroll");
+        };
+        assert_eq!(direction, Wheel::Down);
+        assert_eq!(count, 1);
+        assert!(Cli::try_parse_from(["vitro", "scroll", "vm1", "10", "20", "left"]).is_err());
+    }
+
+    #[test]
+    fn a_click_a_scroll_and_a_drag_can_hold_keys_down() {
+        let cli = Cli::try_parse_from([
+            "vitro", "scroll", "vm1", "10", "20", "down", "--with", "shift",
+        ])
+        .unwrap();
+        let Some(Command::Scroll { with, .. }) = cli.command else {
+            panic!("expected scroll");
+        };
+        assert_eq!(with.as_deref(), Some("shift"));
+
+        let cli = Cli::try_parse_from(["vitro", "click", "vm1", "1", "2", "--with", "ctrl-shift"])
+            .unwrap();
+        let Some(Command::Click { with, .. }) = cli.command else {
+            panic!("expected click");
+        };
+        assert_eq!(with.as_deref(), Some("ctrl-shift"));
+
+        let cli =
+            Cli::try_parse_from(["vitro", "drag", "vm1", "1", "2", "3", "4", "--with", "alt"])
+                .unwrap();
+        let Some(Command::Drag { with, .. }) = cli.command else {
+            panic!("expected drag");
+        };
+        assert_eq!(with.as_deref(), Some("alt"));
+    }
+
+    #[test]
+    fn a_drag_takes_where_it_starts_and_where_it_ends() {
+        let cli = Cli::try_parse_from(["vitro", "drag", "vm1", "1", "2", "3", "4"]).unwrap();
+
+        let Some(Command::Drag {
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            button,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected drag");
+        };
+        assert_eq!((from_x, from_y, to_x, to_y), (1, 2, 3, 4));
+        assert_eq!(button, Button::Left);
     }
 
     #[test]

@@ -301,8 +301,69 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Click { name, x, y }) => {
-            gui::click(&paths, &config, &name, x, y)?;
+        Some(Command::Click {
+            name,
+            x,
+            y,
+            button,
+            count,
+            with,
+        }) => {
+            gui::click(
+                &paths,
+                &config,
+                &name,
+                (x, y),
+                button,
+                count,
+                with.as_deref(),
+            )?;
+            Ok(0)
+        }
+
+        Some(Command::Scroll {
+            name,
+            x,
+            y,
+            direction,
+            count,
+            with,
+        }) => {
+            gui::scroll(
+                &paths,
+                &config,
+                &name,
+                (x, y),
+                direction,
+                count,
+                with.as_deref(),
+            )?;
+            Ok(0)
+        }
+
+        Some(Command::Hover { name, x, y }) => {
+            gui::hover(&paths, &config, &name, (x, y))?;
+            Ok(0)
+        }
+
+        Some(Command::Drag {
+            name,
+            from_x,
+            from_y,
+            to_x,
+            to_y,
+            button,
+            with,
+        }) => {
+            gui::drag(
+                &paths,
+                &config,
+                &name,
+                (from_x, from_y),
+                (to_x, to_y),
+                button,
+                with.as_deref(),
+            )?;
             Ok(0)
         }
 
