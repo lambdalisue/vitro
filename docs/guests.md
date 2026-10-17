@@ -188,6 +188,13 @@ an address and then open port 22, and those are not the same moment.
   instructions say, is found in `vitro ssh` and not in `vitro exec`.
 - `vitro wait --desktop` waits for the Dock, which runs once the preset's
   automatic logon has reached the desktop.
+- Scripting another program's windows from `vitro exec` is refused. `osascript`
+  driving System Events fails with "not allowed assistive access" (-1719),
+  because Accessibility has to be granted in System Settings and nothing in
+  the image grants it; an Apple Event to Finder was seen to wait out its
+  timeout (-1712) instead. Move and resize windows with the GUI commands,
+  whose input arrives from outside the guest and needs no permission: `vitro
+  drag` on a window's corner resizes it, on its title bar moves it.
 
 ## A toolchain in the image
 

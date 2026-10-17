@@ -137,3 +137,6 @@ command naming `git`.
 - Do not run `vitro key shift` before a `click` or `scroll` to hold a
   modifier: `key` lets go at once. Pass `--with shift` (or `ctrl`, `alt`, …)
   to the mouse command; `scroll … down --with shift` scrolls sideways.
+- On a macOS guest, do not script windows with `osascript` and System Events:
+  it is refused for Accessibility (-1719). Take a `screenshot`, then `drag`
+  the window's corner to resize it or its title bar to move it.
