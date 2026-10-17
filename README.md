@@ -275,6 +275,19 @@ $ vitro test windows -- --nocapture    # one image, with extra arguments
 
 [docs/spec/project-file.md](docs/spec/project-file.md) lists every key.
 
+## Driving it from Claude Code
+
+This repository is also a Claude Code plugin marketplace. Its plugin carries a
+skill that teaches an agent to use vitro the way it is meant to be used — the
+one-shot `run --rm`, destroying what it started, PowerShell on Windows guests:
+
+```console
+/plugin install vitro --marketplace lambdalisue/vitro
+```
+
+On a Claude Code older than 2.1.275, add the marketplace first:
+`/plugin marketplace add lambdalisue/vitro`, then `/plugin install vitro@vitro`.
+
 ## Reaching a guest from other tools
 
 Copying is built in. A guest path is written `<vm>:<path>`, or `:<path>` while
