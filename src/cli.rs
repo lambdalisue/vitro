@@ -66,6 +66,10 @@ pub enum Command {
         /// Memory for this VM instead of the image's, such as `16G`
         #[arg(long, value_name = "SIZE")]
         memory: Option<ByteSize>,
+        /// Start from this golden image instead of the configured one: a name
+        /// in the golden directory, a path, or for lume the VM to clone
+        #[arg(long, value_name = "NAME|PATH")]
+        golden: Option<String>,
     },
 
     /// Run the project's command on its images, each in a fresh VM

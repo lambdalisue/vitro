@@ -202,7 +202,8 @@ command's exit code, and destroys the VM whether the command passed, failed or
 was interrupted. Without a command, `run --rm` opens a shell and destroys the
 VM when the shell closes. `promote` runs the other way: it turns
 a VM you have set up into a new golden image, so the hour spent installing a
-toolchain is spent once.
+toolchain is spent once. `run --golden <name>` starts one VM from such an image
+without touching the configuration.
 
 ## Commands
 
@@ -210,7 +211,7 @@ toolchain is spent once.
 | ------------------------ | ---------------------------------------------------- |
 | `setup`                  | Get from nothing to a guest you can build            |
 | `build <image>`          | Build a golden image from installation media         |
-| `run <image> [-- <cmd>…]` | Start a VM, and run a command in it (`--rm`, `--sync`, `--cpus`, `--memory`) |
+| `run <image> [-- <cmd>…]` | Start a VM, and run a command in it (`--rm`, `--sync`, `--cpus`, `--memory`, `--golden`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |

@@ -121,6 +121,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
             name,
             cpus,
             memory,
+            golden,
         }) => {
             let prelude = parse_prelude(cwd, &env)?;
             let record = run::run(
@@ -130,6 +131,7 @@ fn dispatch(cli: Cli) -> Result<i32> {
                     image,
                     name,
                     sizing: run::Sizing { cpus, memory },
+                    golden,
                 },
             )?;
             sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());

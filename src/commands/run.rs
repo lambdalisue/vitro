@@ -40,6 +40,9 @@ pub struct Options {
     pub image: String,
     pub name: Option<String>,
     pub sizing: Sizing,
+    /// A golden image to start from instead of the configured one: a name in
+    /// the golden directory, a path, or for Lume the VM to clone.
+    pub golden: Option<String>,
 }
 
 /// What this one VM gets instead of what its image says.
@@ -50,7 +53,12 @@ pub struct Sizing {
 }
 
 pub fn run(paths: &Paths, config: &Config, options: Options) -> Result<VmRecord> {
-    let image = &with_overrides(config.image(&options.image)?, &options.sizing)?;
+    let mut image = with_overrides(config.image(&options.image)?, &options.sizing)?;
+    if let Some(raw) = &options.golden {
+        let here = std::env::current_dir().context("cannot read the current directory")?;
+        image.golden = chosen_golden(raw, image.backend, &paths.golden_dir(), &here)?;
+    }
+    let image = &image;
     if image.backend == Backend::Lume {
         return run_lume(paths, config, image, options);
     }
@@ -335,6 +343,32 @@ fn with_overrides(image: &Image, sizing: &Sizing) -> Result<Image> {
     Ok(sized)
 }
 
+/// What `--golden` names.
+///
+/// Anything that looks like a path is one, taken from where vitro runs;
+/// anything else is the name of an image in the golden directory, which is
+/// where `build` and `promote` put theirs. Missing is refused here rather than
+/// left for QEMU to report after a directory and a port have been set up.
+fn chosen_golden(raw: &str, backend: Backend, golden_dir: &Path, here: &Path) -> Result<Golden> {
+    if backend == Backend::Lume {
+        return Ok(Golden::VmName(raw.to_string()));
+    }
+    let looks_like_a_path =
+        raw.contains('/') || raw.contains(std::path::MAIN_SEPARATOR) || raw.ends_with(".qcow2");
+    let path = if looks_like_a_path {
+        here.join(raw)
+    } else {
+        golden_dir.join(format!("{raw}.qcow2"))
+    };
+    if !path.is_file() {
+        bail!(
+            "no golden image {raw:?} ({} does not exist); `vitro ls` lists the images there are",
+            path.display()
+        );
+    }
+    Ok(Golden::Image(path))
+}
+
 /// Delete the VM behind a record being reaped, for a backend that keeps one.
 ///
 /// A QEMU guest is only an overlay inside the directory that goes with the
@@ -593,6 +627,70 @@ mod tests {
         )
         .unwrap();
         config.image("box").unwrap().clone()
+    }
+
+    #[test]
+    fn a_bare_name_picks_an_image_from_the_golden_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let golden = temp.path().join("windows-devtools.qcow2");
+        fs::write(&golden, "").unwrap();
+
+        let chosen = chosen_golden(
+            "windows-devtools",
+            Backend::Qemu,
+            temp.path(),
+            Path::new("/"),
+        )
+        .unwrap();
+
+        assert_eq!(chosen, Golden::Image(golden));
+    }
+
+    #[test]
+    fn a_path_is_taken_as_it_is_and_a_relative_one_from_where_vitro_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let golden = temp.path().join("try.qcow2");
+        fs::write(&golden, "").unwrap();
+
+        assert_eq!(
+            chosen_golden(
+                "./try.qcow2",
+                Backend::Qemu,
+                Path::new("/nowhere"),
+                temp.path()
+            )
+            .unwrap(),
+            Golden::Image(temp.path().join("./try.qcow2"))
+        );
+        assert_eq!(
+            chosen_golden(
+                golden.to_str().unwrap(),
+                Backend::Qemu,
+                Path::new("/nowhere"),
+                Path::new("/")
+            )
+            .unwrap(),
+            Golden::Image(golden)
+        );
+    }
+
+    #[test]
+    fn a_golden_image_that_is_not_there_is_refused_before_anything_starts() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let err = chosen_golden("nope", Backend::Qemu, temp.path(), temp.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("nope"), "{err}");
+    }
+
+    #[test]
+    fn a_lume_guest_names_the_vm_to_clone() {
+        assert_eq!(
+            chosen_golden("tahoe-base", Backend::Lume, Path::new("/x"), Path::new("/")).unwrap(),
+            Golden::VmName("tahoe-base".into())
+        );
     }
 
     #[test]

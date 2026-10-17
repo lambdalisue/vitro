@@ -820,6 +820,29 @@ fn test_without_a_project_file_says_what_to_write() {
         .stderr_contains("vitro.toml");
 }
 
+#[cfg(unix)]
+#[test]
+fn run_golden_starts_from_the_named_image_instead_of_the_configured_one() {
+    let sandbox = sandbox_with_a_linux_image();
+    let other = sandbox.write_file(".local/share/vitro/golden/linux-tools.qcow2", &[0u8; 1024]);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox
+        .run(&["run", "--golden", "linux-tools", "linux"])
+        .success();
+
+    let create = sandbox
+        .calls("qemu-img")
+        .pop()
+        .expect("qemu-img should have run");
+    assert!(
+        create.contains(other.to_str().unwrap()),
+        "the overlay should be backed by {}: {create}",
+        other.display()
+    );
+    sandbox.run(&["destroy", "--all"]).success();
+}
+
 #[test]
 fn a_size_that_is_not_a_size_is_a_usage_error() {
     Sandbox::new()

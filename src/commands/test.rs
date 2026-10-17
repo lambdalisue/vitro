@@ -62,6 +62,7 @@ pub fn test(paths: &Paths, config: &Config, project: &Project, options: Options)
                     cpus: project.cpus,
                     memory: project.memory,
                 },
+                golden: None,
             },
         ) {
             // A failure here belongs to this image alone; the others still
