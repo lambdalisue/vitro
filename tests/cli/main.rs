@@ -692,6 +692,58 @@ fn run_with_a_command_but_without_rm_keeps_the_vm() {
     sandbox.run(&["destroy", "--all"]).success();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_runs_the_projects_command_in_a_fresh_vm_and_reports_the_verdict() {
+    let sandbox = sandbox_with_a_linux_image();
+    sandbox.fake_bin_with(
+        "ssh",
+        r#"case "$*" in *"-- exit") exit 0 ;; *"&& make"*) exit 3 ;; esac; exit 0"#,
+    );
+    sandbox.write_file(
+        "work/app/vitro.toml",
+        b"images = [\"linux\"]\ncommand = [\"make\"]\n",
+    );
+    let nested = sandbox.home().join("work/app/src");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let run = sandbox.run_in(&nested, &["test"]);
+
+    assert_eq!(run.code, 3, "stderr: {}", run.stderr);
+    assert!(
+        run.stderr.contains("linux  failed (exit code 3)"),
+        "{}",
+        run.stderr
+    );
+    let scp = sandbox.calls("scp");
+    assert!(scp[0].ends_with(":.vitro-sync.tar"), "{scp:?}");
+    let last = sandbox.calls("ssh").pop().unwrap();
+    assert!(last.ends_with("-- cd app && make"), "{last}");
+    assert!(vm_dirs(&sandbox).is_empty(), "left {:?}", vm_dirs(&sandbox));
+}
+
+#[test]
+fn test_refuses_an_unknown_image_before_starting_anything() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[images.linux]\ngolden = \"/srv/linux.qcow2\"\nssh_user = \"dev\"\n");
+    sandbox.write_file("app/vitro.toml", b"command = [\"make\"]\n");
+
+    sandbox
+        .run_in(&sandbox.home().join("app"), &["test", "linux", "linuz"])
+        .failure()
+        .stderr_contains("linuz");
+}
+
+#[test]
+fn test_without_a_project_file_says_what_to_write() {
+    let sandbox = Sandbox::new();
+
+    sandbox
+        .run(&["test"])
+        .failure()
+        .stderr_contains("vitro.toml");
+}
+
 #[test]
 fn a_size_that_is_not_a_size_is_a_usage_error() {
     Sandbox::new()

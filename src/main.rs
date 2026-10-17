@@ -7,7 +7,7 @@ use clap::Parser;
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
     build, cp, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
-    sshconfig, status,
+    sshconfig, status, test,
 };
 use vitro::{golden, ssh, Config, Golden, Paths, Store, SysinfoProbe};
 
@@ -272,6 +272,19 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
         Some(Command::Cp { operands }) => cp::cp(&paths, &config, &operands),
+
+        Some(Command::Test { images, extra }) => {
+            let here = std::env::current_dir()?;
+            let Some(file) = vitro::find_project(&here) else {
+                bail!(
+                    "no {} in {} or above it; write one to say what this project is tested on",
+                    vitro::PROJECT_FILE,
+                    here.display()
+                );
+            };
+            let project = vitro::Project::load(&file)?;
+            test::test(&paths, &config, &project, test::Options { images, extra })
+        }
 
         Some(Command::Ssh { name }) => {
             let name = pick_vm(&paths, name.as_deref())?;
