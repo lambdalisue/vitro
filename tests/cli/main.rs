@@ -279,6 +279,29 @@ fn exec_without_a_vm_runs_the_whole_line_in_the_only_running_one() {
     assert!(call.ends_with("-- uname -a"), "{call}");
 }
 
+#[cfg(unix)]
+#[test]
+fn exec_writes_the_directory_and_variables_in_front_of_the_command() {
+    let sandbox = Sandbox::new();
+    sandbox.write_vm_record("linux-7f3a2c", std::process::id(), 53422);
+    sandbox.fake_bin("ssh", 0);
+
+    sandbox
+        .run(&["exec", "--cwd", "src", "--env", "A=1", "linux", "make"])
+        .success();
+
+    let call = sandbox.calls("ssh").pop().expect("ssh should have run");
+    assert!(call.ends_with("-- cd src && A=1 make"), "{call}");
+}
+
+#[test]
+fn a_malformed_variable_is_refused_before_any_vm_is_looked_up() {
+    Sandbox::new()
+        .run(&["exec", "--env", "NOVALUE", "linux", "make"])
+        .failure()
+        .stderr_contains("NAME=VALUE");
+}
+
 #[test]
 fn a_dead_vms_port_is_refused_rather_than_pointing_at_whatever_took_it_over() {
     let sandbox = Sandbox::new();

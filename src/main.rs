@@ -9,7 +9,7 @@ use vitro::commands::{
     build, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
     sshconfig, status,
 };
-use vitro::{golden, Config, Golden, Paths, Store, SysinfoProbe};
+use vitro::{golden, ssh, Config, Golden, Paths, Store, SysinfoProbe};
 
 /// Exit codes, as promised to callers: 0 success, 1 failure, 2 bad command
 /// line. clap already uses 2 for its own parse errors.
@@ -111,9 +111,17 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Exec { args }) => {
+        Some(Command::Exec { cwd, env, args }) => {
+            // Before the VM is looked up, so a typo costs no connection.
+            let prelude = ssh::Prelude {
+                cwd,
+                env: env
+                    .iter()
+                    .map(|pair| ssh::parse_env(pair))
+                    .collect::<Result<_>>()?,
+            };
             let (name, command) = split_leading_vm(&paths, &args)?;
-            exec::exec(&paths, &config, &name, &command)
+            exec::exec(&paths, &config, &name, &command, prelude)
         }
 
         Some(Command::Promote {

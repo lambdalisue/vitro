@@ -46,6 +46,12 @@ pub enum Command {
     /// The VM can be left out while only one is running: when the first word
     /// names no VM, the whole line is the command.
     Exec {
+        /// Run the command in this guest directory
+        #[arg(long, value_name = "DIR")]
+        cwd: Option<String>,
+        /// Set a variable for the command; may be repeated
+        #[arg(long = "env", value_name = "NAME=VALUE")]
+        env: Vec<String>,
         #[arg(trailing_var_arg = true, required = true, value_name = "VM] [COMMAND")]
         args: Vec<String>,
     },
@@ -183,10 +189,25 @@ mod tests {
         let cli =
             Cli::try_parse_from(["vitro", "exec", "vm1", "cargo", "test", "--", "-q"]).unwrap();
 
-        let Some(Command::Exec { args }) = cli.command else {
+        let Some(Command::Exec { args, .. }) = cli.command else {
             panic!("expected exec");
         };
         assert_eq!(args, ["vm1", "cargo", "test", "--", "-q"]);
+    }
+
+    #[test]
+    fn exec_options_go_before_the_vm_and_everything_after_belongs_to_the_guest() {
+        let cli = Cli::try_parse_from([
+            "vitro", "exec", "--cwd", "src", "--env", "A=1", "--env", "B=2", "vm1", "ls", "--cwd",
+        ])
+        .unwrap();
+
+        let Some(Command::Exec { cwd, env, args }) = cli.command else {
+            panic!("expected exec");
+        };
+        assert_eq!(cwd.as_deref(), Some("src"));
+        assert_eq!(env, ["A=1", "B=2"]);
+        assert_eq!(args, ["vm1", "ls", "--cwd"]);
     }
 
     #[test]

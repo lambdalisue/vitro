@@ -198,6 +198,14 @@ is running.
 Exit codes are `0` success, `1` failure, `2` a bad command line — except
 `exec`, which returns whatever the guest's command returned.
 
+`exec --cwd <dir>` runs the command in a guest directory and `--env NAME=VALUE`
+sets a variable for it. vitro writes both in the guest shell's own syntax, so
+the same line works against a Windows guest, whose shell is PowerShell:
+
+```console
+$ vitro exec --cwd project --env RUST_BACKTRACE=1 windows cargo test
+```
+
 ## Reaching a guest from other tools
 
 The forwarded SSH port changes on every `run`, which is fine for `vitro exec`
