@@ -7,7 +7,7 @@ use clap::{CommandFactory, Parser};
 use vitro::cli::{Cli, Command};
 use vitro::commands::{
     build, cp, destroy, doctor, exec, forward, gui, inspect, keygen, ls, promote, run, setup,
-    sshconfig, status, test,
+    sshconfig, status, test, wait,
 };
 use vitro::{golden, ssh, Config, Golden, Paths, Store, SysinfoProbe};
 
@@ -307,6 +307,16 @@ fn dispatch(cli: Cli) -> Result<i32> {
         Some(Command::Status { name, json }) => show_status(&paths, &config, name.as_deref(), json),
 
         Some(Command::Cp { operands }) => cp::cp(&paths, &config, &operands),
+
+        Some(Command::Wait {
+            name,
+            desktop,
+            timeout,
+        }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
+            wait::wait(&paths, &config, &name, &wait::Options { desktop, timeout })?;
+            Ok(0)
+        }
 
         Some(Command::Test { images, extra }) => {
             let here = std::env::current_dir()?;
