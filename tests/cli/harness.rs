@@ -139,6 +139,58 @@ exit 0
         dir
     }
 
+    /// The same for a macOS guest lume holds, whose process is `pid`.
+    #[cfg(unix)]
+    pub fn write_lume_record(&self, name: &str, pid: u32) -> PathBuf {
+        use vitro::ProcessProbe;
+
+        let store = vitro::Store::new(self.state_dir());
+        let dir = store.vm_dir(name);
+        store
+            .save(&vitro::VmRecord {
+                name: name.into(),
+                image: "macos".into(),
+                backend: vitro::Backend::Lume,
+                guest: Default::default(),
+                pid,
+                pid_start_time: vitro::SysinfoProbe::new().start_time(pid).unwrap_or(1),
+                ssh_host: "192.168.64.2".into(),
+                ssh_port: 22,
+                ssh_user: "lume".into(),
+                golden: vitro::Golden::VmName("tahoe-base".into()),
+                qmp_socket: None,
+                dir: dir.clone(),
+                created_at: time::OffsetDateTime::UNIX_EPOCH,
+            })
+            .expect("write VM record");
+        dir
+    }
+
+    /// Start `<bin>/<program> <args>` detached from the test, the way lume
+    /// leaves `lume run` behind, and return its PID.
+    ///
+    /// Through a shell that exits at once, so the process is not the test's
+    /// child: one that was would linger as a zombie after it exits, and look
+    /// alive to anything probing for it. Perl puts SIGINT back to its default
+    /// first, because a non-interactive shell starts its background jobs with
+    /// it ignored, and an ignored signal cannot be trapped again.
+    #[cfg(unix)]
+    pub fn spawn_detached(&self, program: &str, args: &[&str]) -> u32 {
+        let line = format!(
+            "perl -e '$SIG{{INT}} = \"DEFAULT\"; exec @ARGV' '{}' {} > /dev/null 2>&1 < /dev/null & echo $!",
+            self.home().join("bin").join(program).display(),
+            args.join(" ")
+        );
+        let output = Command::new("sh")
+            .args(["-c", &line])
+            .output()
+            .expect("spawn detached");
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("a pid")
+    }
+
     /// Every invocation of a fake binary, in order.
     ///
     /// Unix-only, like the fakes themselves: on Windows nothing writes these

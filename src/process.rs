@@ -26,6 +26,17 @@ pub fn terminate(pid: u32) {
     }
 }
 
+/// Interrupt a process the way Ctrl-C would. What lume answers by shutting the
+/// guest it holds down cleanly.
+pub fn interrupt(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc_kill(pid as i32, 2);
+    }
+    #[cfg(not(unix))]
+    terminate(pid);
+}
+
 /// Stop insisting.
 pub fn kill(pid: u32) {
     #[cfg(unix)]
@@ -50,6 +61,12 @@ pub fn kill(pid: u32) {
 /// that only takes effect after them is one the user has to sit through.
 pub fn wait_for_exit(timeout: Duration, probe: impl FnMut() -> bool) -> bool {
     wait(timeout, probe, true)
+}
+
+/// [`wait_for_exit`] that a Ctrl-C does not cut short, for a stop that has
+/// already been asked for and must be seen through before anything is deleted.
+pub fn wait_until_gone(timeout: Duration, probe: impl FnMut() -> bool) -> bool {
+    wait(timeout, probe, false)
 }
 
 fn wait(timeout: Duration, mut probe: impl FnMut() -> bool, interruptible: bool) -> bool {

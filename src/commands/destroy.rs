@@ -145,7 +145,7 @@ fn stop_lume(record: &VmRecord, options: &Options, tools: &ToolPaths) -> Result<
     }
     // Stopping a VM that is already stopped is not an error worth failing on;
     // deleting it is the part that has to work.
-    let _ = lume::run(&binary, &lume::stop_args(&record.name));
+    let _ = lume::stop(&binary, &record.name);
     lume::run(&binary, &lume::delete_args(&record.name))?;
     Ok(Outcome::Stopped(record.name.clone()))
 }

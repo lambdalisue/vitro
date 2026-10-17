@@ -392,7 +392,7 @@ fn reap_backend(record: &VmRecord) {
         );
         return;
     };
-    let _ = lume::run(&found.path, &lume::stop_args(&record.name));
+    let _ = lume::stop(&found.path, &record.name);
     if let Err(e) = lume::run(&found.path, &lume::delete_args(&record.name)) {
         eprintln!("vitro: could not delete the lume VM {}: {e:#}", record.name);
     }
@@ -575,7 +575,7 @@ impl Drop for VmGuard {
         if let Some((binary, name)) = &self.lume_vm {
             // Through lume, and in its order: a half-created clone left behind
             // is a VM the user never asked for, holding tens of gigabytes.
-            let _ = lume::run(binary, &lume::stop_args(name));
+            let _ = lume::stop(binary, name);
             if let Err(e) = lume::run(binary, &lume::delete_args(name)) {
                 eprintln!("vitro: could not delete the lume VM {name}: {e:#}");
             }
