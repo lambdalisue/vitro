@@ -101,8 +101,21 @@ fn dispatch(cli: Cli) -> Result<i32> {
             Ok(0)
         }
 
-        Some(Command::Run { image, name }) => {
-            let record = run::run(&paths, &config, run::Options { image, name })?;
+        Some(Command::Run {
+            image,
+            name,
+            cpus,
+            memory,
+        }) => {
+            let record = run::run(
+                &paths,
+                &config,
+                run::Options {
+                    image,
+                    name,
+                    sizing: run::Sizing { cpus, memory },
+                },
+            )?;
             sshconfig::refresh_if_present(&paths, &config, &SysinfoProbe::new());
             println!(
                 "{} is up: ssh {}@{} -p {}",

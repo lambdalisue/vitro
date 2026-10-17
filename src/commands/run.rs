@@ -14,8 +14,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use time::OffsetDateTime;
 
 use crate::{
-    golden, image, lume, process, qemu, ssh, tools, Backend, Config, Golden, Image, Paths,
-    ProcessProbe, Store, SysinfoProbe, VmRecord,
+    golden, image, lume, process, qemu, ssh, tools, Backend, ByteSize, Config, Golden, Image,
+    Paths, ProcessProbe, Store, SysinfoProbe, VmRecord,
 };
 
 /// How many times to re-draw a port when QEMU refuses to bind the one we took.
@@ -38,10 +38,18 @@ const KNOWN_HOSTS: &str = "known_hosts";
 pub struct Options {
     pub image: String,
     pub name: Option<String>,
+    pub sizing: Sizing,
+}
+
+/// What this one VM gets instead of what its image says.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sizing {
+    pub cpus: Option<u32>,
+    pub memory: Option<ByteSize>,
 }
 
 pub fn run(paths: &Paths, config: &Config, options: Options) -> Result<VmRecord> {
-    let image = config.image(&options.image)?;
+    let image = &with_overrides(config.image(&options.image)?, &options.sizing)?;
     if image.backend == Backend::Lume {
         return run_lume(paths, config, image, options);
     }
@@ -242,8 +250,32 @@ fn run_lume(
     Ok(record)
 }
 
-/// Remove records whose process is gone, so a fresh `run` does not inherit the
-/// debris of an older one.
+/// The image as this VM will run it.
+///
+/// A Lume guest is a clone of a VM whose size lume keeps, and vitro does not
+/// size it at all; accepting the flags there would be accepting them to do
+/// nothing.
+fn with_overrides(image: &Image, sizing: &Sizing) -> Result<Image> {
+    if sizing == &Sizing::default() {
+        return Ok(image.clone());
+    }
+    if image.backend == Backend::Lume {
+        bail!(
+            "image {:?} uses the lume backend, which keeps the size of the VM it clones; \
+             --cpus and --memory apply to QEMU guests only",
+            image.key
+        );
+    }
+    let mut sized = image.clone();
+    if let Some(cpus) = sizing.cpus {
+        sized.cpus = cpus;
+    }
+    if let Some(memory) = sizing.memory {
+        sized.memory = memory;
+    }
+    Ok(sized)
+}
+
 /// Delete the VM behind a record being reaped, for a backend that keeps one.
 ///
 /// A QEMU guest is only an overlay inside the directory that goes with the
@@ -490,6 +522,58 @@ mod tests {
             dir: PathBuf::new(),
             created_at: OffsetDateTime::UNIX_EPOCH,
         }
+    }
+
+    fn image(backend: Backend) -> Image {
+        let config = Config::parse(
+            &format!(
+                "[images.box]\nbackend = \"{backend}\"\ngolden = \"box\"\nssh_user = \"dev\"\ncpus = 2\nmemory = \"4G\"\n"
+            ),
+            Path::new("/home/dev"),
+            Path::new("/home/dev/key"),
+        )
+        .unwrap();
+        config.image("box").unwrap().clone()
+    }
+
+    #[test]
+    fn overrides_replace_the_images_cpus_and_memory_for_this_vm_only() {
+        let base = image(Backend::Qemu);
+
+        let sized = with_overrides(
+            &base,
+            &Sizing {
+                cpus: Some(8),
+                memory: Some("16G".parse().unwrap()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(sized.cpus, 8);
+        assert_eq!(sized.memory, "16G".parse().unwrap());
+        assert_eq!(base.cpus, 2);
+    }
+
+    #[test]
+    fn no_override_leaves_the_image_as_configured() {
+        let base = image(Backend::Qemu);
+
+        assert_eq!(with_overrides(&base, &Sizing::default()).unwrap(), base);
+    }
+
+    #[test]
+    fn a_lume_guest_refuses_overrides_rather_than_ignoring_them() {
+        let err = with_overrides(
+            &image(Backend::Lume),
+            &Sizing {
+                cpus: Some(8),
+                memory: None,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("lume"), "{err}");
     }
 
     #[test]

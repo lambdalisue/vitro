@@ -8,6 +8,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::ByteSize;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "vitro",
@@ -39,6 +41,12 @@ pub enum Command {
         /// Name the VM instead of generating one
         #[arg(long)]
         name: Option<String>,
+        /// CPUs for this VM instead of the image's
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        cpus: Option<u32>,
+        /// Memory for this VM instead of the image's, such as `16G`
+        #[arg(long, value_name = "SIZE")]
+        memory: Option<ByteSize>,
     },
 
     /// Run a command in a VM and pass its exit code through

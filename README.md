@@ -171,7 +171,7 @@ toolchain is spent once.
 | ------------------------ | ---------------------------------------------------- |
 | `setup`                  | Get from nothing to a guest you can build            |
 | `build <image>`          | Build a golden image from installation media         |
-| `run <image>`            | Start a VM from a golden image                       |
+| `run <image>`            | Start a VM from a golden image (`--cpus`, `--memory`) |
 | `exec [<vm>] <cmd>…`     | Run a command in a VM and pass its exit code through |
 | `ssh [<vm>]`             | Open an interactive shell                            |
 | `cp <src>… <dest>`       | Copy files between the host and a VM (`<vm>:<path>`) |

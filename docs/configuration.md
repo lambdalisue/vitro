@@ -14,8 +14,8 @@ Paths beginning with `~` expand against your home directory.
 
 | Setting | Meaning |
 | --- | --- |
-| `cpus` | Virtual CPUs given to each guest |
-| `memory` | Memory per guest, as `4G`, `512M` and so on |
+| `cpus` | Virtual CPUs given to each guest. `run --cpus` overrides it for one VM |
+| `memory` | Memory per guest, as `4G`, `512M` and so on. `run --memory` overrides it for one VM |
 | `ssh_user` | The account vitro creates and connects as |
 | `ssh_key` | Private key to authorise and present. Defaults to `~/.config/vitro/id_ed25519`; vitro expects `<ssh_key>.pub` beside it. A golden image carries whichever key was there when it was built, so changing this does not reach an image already built |
 | `boot_timeout` | How long `run` waits for a guest to answer SSH. A guest that answers and refuses the key gives up sooner, since waiting cannot change that |
