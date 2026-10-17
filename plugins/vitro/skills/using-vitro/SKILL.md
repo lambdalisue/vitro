@@ -75,12 +75,16 @@ $ vitro destroy windows
 
 ## Waiting instead of sleeping
 
-Never poll a guest with `sleep`. `vitro wait <vm>` returns once the VM answers
-over SSH — after `Restart-Computer`, a reboot a script asked for, or anything
-else that took the guest away — and `vitro wait --desktop <vm>` once somebody
-is logged in to its desktop (Windows, macOS). `--timeout 10m` bounds either.
-A guest asked to restart keeps answering for a few seconds before it goes
-down, so leave those seconds before `vitro wait`, or it returns at once.
+Never poll a guest with `sleep`.
+
+- To restart a guest, use `vitro restart <vm>` rather than `Restart-Computer`
+  or `reboot`: it returns only once the guest has booted again, where a wait
+  started right after asking would see the old session still answering.
+- `vitro wait <vm>` returns once the VM answers over SSH, for a guest that went
+  away on its own or for a reboot a script asked for.
+- `vitro wait --desktop <vm>` (or `restart --desktop`) returns once somebody is
+  logged in to the desktop (Windows, macOS).
+- `--timeout 10m` bounds any of them.
 
 ## Anything longer than one line: `--script`
 

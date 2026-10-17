@@ -308,6 +308,17 @@ fn dispatch(cli: Cli) -> Result<i32> {
 
         Some(Command::Cp { operands }) => cp::cp(&paths, &config, &operands),
 
+        Some(Command::Restart {
+            name,
+            desktop,
+            timeout,
+        }) => {
+            let name = pick_vm(&paths, name.as_deref())?;
+            wait::restart(&paths, &config, &name, &wait::Options { desktop, timeout })?;
+            eprintln!("{name} is back");
+            Ok(0)
+        }
+
         Some(Command::Wait {
             name,
             desktop,

@@ -500,6 +500,20 @@ pub fn run_passthrough(ssh: &Path, target: &SshTarget, options: &SshOptions) -> 
     Ok(status.code().unwrap_or(255))
 }
 
+/// Run a command in the guest and return its exit code and what it printed.
+pub fn run_output(ssh: &Path, target: &SshTarget, options: &SshOptions) -> Result<(i32, String)> {
+    let output = Command::new(ssh)
+        .args(ssh_args(target, options))
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .with_context(|| format!("cannot run {}", ssh.display()))?;
+    Ok((
+        output.status.code().unwrap_or(255),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
+}
+
 /// [`run_passthrough`] with nothing shown, for a probe whose exit code is the
 /// whole answer.
 pub fn run_quietly(ssh: &Path, target: &SshTarget, options: &SshOptions) -> Result<i32> {
