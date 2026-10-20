@@ -1316,3 +1316,276 @@ fn the_fake_binary_scaffolding_shadows_path_and_records_arguments() {
     assert!(status.success());
     assert_eq!(sandbox.calls("qemu-img"), ["create -f qcow2 overlay.qcow2"]);
 }
+
+#[cfg(unix)]
+fn macos_build_sandbox(timeout: &str, body: &str) -> Sandbox {
+    let sandbox = Sandbox::new();
+    sandbox.write_file("restore.ipsw", b"restore");
+    sandbox.write_file(
+        ".local/share/vitro/ssh/id_ed25519.pub",
+        b"ssh-ed25519 AAAA test",
+    );
+    sandbox.write_config(&format!(
+        r#"
+        [images.macos]
+        backend = "lume"
+        golden = "tahoe-base"
+        guest = "unix"
+        ssh_user = "lume"
+        ssh_key = "~/.local/share/vitro/ssh/id_ed25519"
+        [images.macos.build]
+        kind = "lume-ipsw"
+        source = "~/restore.ipsw"
+        unattended = "tahoe"
+        build_timeout = "{timeout}"
+    "#
+    ));
+    sandbox.fake_bin_with("lume", body);
+    sandbox
+}
+
+#[cfg(unix)]
+#[test]
+fn macos_build_deadline_bounds_each_backend_process() {
+    for phase in ["create", "run", "get", "ssh", "clone"] {
+        let body = format!(
+            r#"
+            [ "$1" = "{phase}" ] && exec sleep 3
+            [ "$1" = get ] && {{
+                [ "$2" = tahoe-base ] && exit 1
+                printf '%s\n' '{{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}}'
+            }}
+            exit 0
+        "#
+        );
+        let sandbox = macos_build_sandbox("300ms", &body);
+        let started = std::time::Instant::now();
+        sandbox
+            .run(&["build", "macos"])
+            .failure()
+            .stderr_contains("build_timeout");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{phase}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_macos_builds_keep_the_staging_vm_only_when_requested() {
+    for phase in ["create", "run"] {
+        for keep in [false, true] {
+            let sandbox =
+                macos_build_sandbox("10s", &format!("[ \"$1\" = {phase} ] && exit 1\nexit 0"));
+            let args = if keep {
+                vec!["build", "macos", "--keep-failed"]
+            } else {
+                vec!["build", "macos"]
+            };
+            let result = sandbox.run(&args).failure();
+            let calls = sandbox.calls("lume");
+            let deletes = calls
+                .iter()
+                .filter(|c| c.starts_with("delete tahoe-base-building "))
+                .count();
+            assert_eq!(deletes, if keep { 1 } else { 2 }, "{phase}: {calls:?}");
+            assert!(
+                calls.iter().any(|c| c == "stop tahoe-base-building"),
+                "{calls:?}"
+            );
+            if keep {
+                assert!(
+                    result.stderr.contains("kept") && result.stderr.contains("tahoe-base-building"),
+                    "{}",
+                    result.stderr
+                );
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn status_recommends_running_a_macos_golden_only_after_lume_finds_it() {
+    for present in [false, true] {
+        let sandbox = macos_build_sandbox(
+            "10s",
+            if present {
+                "printf '%s\n' '{\"name\":\"tahoe-base\",\"status\":\"stopped\"}'"
+            } else {
+                "exit 1"
+            },
+        );
+        let json = sandbox.run(&["status", "--json"]).success().json();
+        assert_eq!(json["golden"][0]["present"], present);
+        let next = json["next"].as_array().unwrap();
+        assert!(
+            next.contains(&serde_json::json!(if present {
+                "vitro run macos"
+            } else {
+                "vitro build macos"
+            })),
+            "{json}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_macos_build_deadline_is_shared_between_stages() {
+    let sandbox = macos_build_sandbox(
+        "300ms",
+        r#"
+        case "$1" in
+          create) sleep 0.2 ;;
+          run) exec sleep 0.2 ;;
+        esac
+        exit 0
+    "#,
+    );
+    sandbox
+        .run(&["build", "macos"])
+        .failure()
+        .stderr_contains("build_timeout");
+    assert!(!sandbox.calls("lume").iter().any(|c| c.starts_with("get ")));
+}
+
+#[cfg(unix)]
+#[test]
+fn macos_build_deadline_bounds_provisioning_and_ssh_probes() {
+    for phase in ["probe", "copy", "provision"] {
+        let sandbox = macos_build_sandbox(
+            "300ms",
+            r#"
+            [ "$1" = get ] && {
+                [ "$2" = tahoe-base ] && exit 1
+                printf '%s\n' '{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}'
+            }
+            exit 0
+        "#,
+        );
+        sandbox.write_file("provision.sh", b"true\n");
+        let mut config = std::fs::read_to_string(sandbox.config_file()).unwrap();
+        config.push_str("provision = \"~/provision.sh\"\n");
+        sandbox.write_config(&config);
+        sandbox.fake_bin_with(
+            "scp",
+            if phase == "copy" {
+                "exec sleep 3"
+            } else {
+                "exit 0"
+            },
+        );
+        sandbox.fake_bin_with(
+            "ssh",
+            match phase {
+                "probe" => "exec sleep 3",
+                "provision" => "case \"$*\" in *vitro-script*) exec sleep 3 ;; esac\nexit 0",
+                _ => "exit 0",
+            },
+        );
+        let started = std::time::Instant::now();
+        sandbox
+            .run(&["build", "macos"])
+            .failure()
+            .stderr_contains("build_timeout");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{phase}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_successful_macos_build_removes_staging_even_with_keep_failed() {
+    let sandbox = macos_build_sandbox(
+        "10s",
+        r#"
+        [ "$1" = get ] && {
+            [ "$2" = tahoe-base ] && exit 1
+            printf '%s\n' '{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}'
+        }
+        exit 0
+    "#,
+    );
+    sandbox.run(&["build", "macos", "--keep-failed"]).success();
+    let calls = sandbox.calls("lume");
+    assert!(
+        calls
+            .iter()
+            .any(|c| c == "clone tahoe-base-building tahoe-base"),
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.starts_with("delete tahoe-base-building "))
+            .count(),
+        2
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_build_timeout_restores_the_existing_golden() {
+    for phase in ["delete", "clone"] {
+        let sandbox = macos_build_sandbox(
+            "300ms",
+            &format!(
+                r#"
+            case "$1" in
+              get) printf '%s\n' '{{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}}' ;;
+              delete)
+                if [ "$2" = tahoe-base ]; then
+                    rm -f "$HOME/golden-exists"
+                    [ "{phase}" = delete ] && exec sleep 3
+                fi ;;
+              clone)
+                if [ "$2" = tahoe-base-building ]; then exec sleep 3; fi
+                if [ "$2" = tahoe-base-previous ]; then touch "$HOME/golden-exists"; fi ;;
+            esac
+            exit 0
+        "#
+            ),
+        );
+        sandbox.write_file("golden-exists", b"old golden");
+        sandbox
+            .run(&["build", "macos"])
+            .failure()
+            .stderr_contains("build_timeout");
+        assert!(
+            sandbox.home().join("golden-exists").exists(),
+            "{phase}: {:?}",
+            sandbox.calls("lume")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn interrupting_a_macos_build_still_stops_and_deletes_staging() {
+    let sandbox = macos_build_sandbox(
+        "10s",
+        r#"
+        [ "$1" = create ] && kill -INT "$PPID"
+        exit 0
+    "#,
+    );
+    let result = sandbox.run(&["build", "macos"]);
+    assert_ne!(result.code, 0, "{}", result.stderr);
+    let calls = sandbox.calls("lume");
+    assert!(
+        calls.iter().any(|c| c == "stop tahoe-base-building"),
+        "{calls:?}"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|c| c.starts_with("delete tahoe-base-building "))
+            .count(),
+        2,
+        "{calls:?}"
+    );
+}

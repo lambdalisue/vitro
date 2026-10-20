@@ -143,14 +143,27 @@ pub fn collect(
                     size_bytes: None,
                 },
             },
-            // Lume keeps its VMs in its own store; vitro cannot see them without
-            // asking, and `ls` does not shell out.
             Golden::VmName(name) => GoldenRow {
                 image: image.key.clone(),
                 backend: image.backend.to_string(),
                 location: name.clone(),
                 size_bytes: None,
-                present: true,
+                present: crate::tools::resolve(
+                    "lume",
+                    config.tools().lume.as_deref(),
+                    "tools.lume",
+                )
+                .and_then(|tool| {
+                    crate::lume::get_until(
+                        &tool.path,
+                        name,
+                        &crate::process::Deadline::new(
+                            Duration::from_secs(5),
+                            "lume lookup timeout",
+                        ),
+                    )
+                })
+                .is_ok(),
             },
         })
         .collect();

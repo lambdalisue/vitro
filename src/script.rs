@@ -137,6 +137,33 @@ pub fn run(
     )
 }
 
+/// Provision a Unix guest within the build's shared deadline.
+pub fn run_until(
+    ssh_binary: &Path,
+    scp_binary: &Path,
+    target: &ssh::SshTarget,
+    guest: Guest,
+    script: &Path,
+    deadline: &crate::process::Deadline,
+) -> Result<i32> {
+    check(script, guest)?;
+    let remote = remote_name(script);
+    let status = deadline.status(
+        std::process::Command::new(scp_binary).args(ssh::scp_args(target, script, &remote)),
+    )?;
+    if !status.success() {
+        bail!("could not copy {} into the guest", script.display());
+    }
+    let options = ssh::SshOptions {
+        command: runner(guest, script, &remote, &[]),
+        quoting: guest.into(),
+        ..Default::default()
+    };
+    let status = deadline
+        .status(std::process::Command::new(ssh_binary).args(ssh::ssh_args(target, &options)))?;
+    Ok(status.code().unwrap_or(255))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

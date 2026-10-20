@@ -17,7 +17,8 @@ $ vitro status --json
 ```
 
 It lists running VMs, the images that can be run or built, and a `next` array
-of commands worth running now. Prefer it to guessing image names. When a
+of commands worth running now. Lume images are offered for `run` only when
+lume confirms the golden VM exists. Prefer it to guessing image names. When a
 command fails for a reason outside vitro (QEMU missing, no key, no firmware),
 `vitro doctor` names the fix.
 
@@ -129,6 +130,9 @@ command naming `git`.
 
 - Do not run `vitro build` unless asked: it takes from seconds (Linux) to
   tens of minutes (Windows) and may need an installer the user must download.
+- For a macOS build failure, `--keep-failed` keeps the staging VM for
+  inspection if lume has not already deleted it. `build_timeout` covers the
+  installation and provisioning together; failure cleanup can take longer.
 - Do not use `destroy --all` unless every VM is yours to destroy.
 - Do not pass `--graceful` to `destroy`; the default forced stop is intended.
 - GUI commands (`screenshot`, `key`, `click`, `scroll`, `hover`, `drag`,

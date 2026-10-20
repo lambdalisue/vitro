@@ -197,7 +197,7 @@ pub fn latest_ipsw(binary: &Path) -> Result<String> {
     parse_ipsw_url(&output)
 }
 
-fn parse_ipsw_url(output: &str) -> Result<String> {
+pub fn parse_ipsw_url(output: &str) -> Result<String> {
     // `lume` mixes progress into its output; the URL is the last thing that
     // looks like one.
     let url = output
@@ -212,11 +212,28 @@ fn parse_ipsw_url(output: &str) -> Result<String> {
 
 /// Run a `lume` subcommand, returning its standard output.
 pub fn run(binary: &Path, args: &[String]) -> Result<String> {
-    let output = Command::new(binary)
+    run_inner(binary, args, None)
+}
+
+pub fn run_until(binary: &Path, args: &[String], deadline: &process::Deadline) -> Result<String> {
+    run_inner(binary, args, Some(deadline))
+}
+
+fn run_inner(
+    binary: &Path,
+    args: &[String],
+    deadline: Option<&process::Deadline>,
+) -> Result<String> {
+    let mut command = Command::new(binary);
+    command
         .args(args)
         .env(TELEMETRY_OFF.0, TELEMETRY_OFF.1)
-        .output()
-        .with_context(|| format!("cannot run {}", binary.display()))?;
+        .stdin(std::process::Stdio::null());
+    let output = match deadline {
+        Some(deadline) => deadline.output(&mut command),
+        None => command.output().map_err(Into::into),
+    }
+    .with_context(|| format!("cannot run {}", binary.display()))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -239,12 +256,14 @@ pub fn run(binary: &Path, args: &[String]) -> Result<String> {
 /// Installing macOS runs for several minutes. Capturing its output would mean
 /// showing nothing at all until it finished, which is indistinguishable from
 /// vitro having hung.
-pub fn run_visibly(binary: &Path, args: &[String]) -> Result<()> {
-    let status = Command::new(binary)
-        .args(args)
-        .env(TELEMETRY_OFF.0, TELEMETRY_OFF.1)
-        .stdin(std::process::Stdio::null())
-        .status()
+pub fn run_visibly(binary: &Path, args: &[String], deadline: &process::Deadline) -> Result<()> {
+    let status = deadline
+        .status(
+            Command::new(binary)
+                .args(args)
+                .env(TELEMETRY_OFF.0, TELEMETRY_OFF.1)
+                .stdin(std::process::Stdio::null()),
+        )
         .with_context(|| format!("cannot run {}", binary.display()))?;
 
     if !status.success() {
@@ -259,6 +278,24 @@ pub fn run_visibly(binary: &Path, args: &[String]) -> Result<()> {
 pub fn get(binary: &Path, name: &str) -> Result<VmInfo> {
     let text = run(binary, &get_args(name))?;
     parse_info(name, &text)
+}
+
+pub fn get_until(binary: &Path, name: &str, deadline: &process::Deadline) -> Result<VmInfo> {
+    parse_info(name, &run_until(binary, &get_args(name), deadline)?)
+}
+
+pub fn stop_until(binary: &Path, name: &str, deadline: &process::Deadline) -> Result<()> {
+    let Some((pid, start)) = SysinfoProbe::new().find_by_command(&["lume", "run", name]) else {
+        return run_until(binary, &stop_args(name), deadline).map(drop);
+    };
+    process::interrupt(pid);
+    if process::wait_until_gone(deadline.remaining()?.min(STOP_TIMEOUT), || {
+        process::is_running(&SysinfoProbe::new(), pid, start)
+    }) {
+        return Ok(());
+    }
+    deadline.remaining()?;
+    bail!("lume did not stop {name}")
 }
 
 /// Read what vitro needs out of `lume get --format json`.
@@ -309,10 +346,22 @@ pub fn parse_info(name: &str, json: &str) -> Result<VmInfo> {
 /// until it is true, so waiting only for the address means arriving early and
 /// being told SSH is not available.
 pub fn wait_until_ready(binary: &Path, name: &str, timeout: Duration) -> Result<String> {
+    wait_until_ready_before(
+        binary,
+        name,
+        &process::Deadline::new(timeout, "lume readiness timeout"),
+    )
+}
+
+pub fn wait_until_ready_before(
+    binary: &Path,
+    name: &str,
+    deadline: &process::Deadline,
+) -> Result<String> {
     let started = Instant::now();
     loop {
         crate::signals::check()?;
-        let info = get(binary, name)?;
+        let info = get_until(binary, name, deadline)?;
         if let Some(address) = info.reachable_address() {
             return Ok(address.to_string());
         }
@@ -322,15 +371,7 @@ pub fn wait_until_ready(binary: &Path, name: &str, timeout: Duration) -> Result<
                 info.status
             );
         }
-        if started.elapsed() >= timeout {
-            bail!(
-                "lume did not report {name} as reachable within {}s (address {}, ssh {})",
-                timeout.as_secs(),
-                info.ip_address.as_deref().unwrap_or("none"),
-                info.ssh_available
-            );
-        }
-        std::thread::sleep(POLL_INTERVAL);
+        std::thread::sleep(POLL_INTERVAL.min(deadline.remaining()?));
     }
 }
 
