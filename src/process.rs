@@ -11,6 +11,102 @@ use crate::ProcessProbe;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
+/// One budget shared by every stage of a macOS image build.
+#[derive(Clone, Copy)]
+pub struct Deadline {
+    started: Instant,
+    timeout: Duration,
+    label: &'static str,
+    interruptible: bool,
+}
+
+impl Deadline {
+    pub fn new(timeout: Duration, label: &'static str) -> Self {
+        Self {
+            started: Instant::now(),
+            timeout,
+            label,
+            interruptible: true,
+        }
+    }
+
+    pub fn uninterruptible(mut self) -> Self {
+        self.interruptible = false;
+        self
+    }
+
+    pub fn remaining(&self) -> anyhow::Result<Duration> {
+        if self.interruptible {
+            crate::signals::check()?;
+        }
+        self.timeout
+            .checked_sub(self.started.elapsed())
+            .filter(|left| !left.is_zero())
+            .ok_or_else(|| anyhow::anyhow!("{} ({:?}) exceeded", self.label, self.timeout))
+    }
+
+    pub fn status(
+        &self,
+        command: &mut std::process::Command,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        use anyhow::Context;
+        self.remaining()?;
+        // Killing the shell alone leaves its installer or SSH child running.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command
+            .spawn()
+            .with_context(|| format!("cannot run {:?}", command.get_program()))?;
+        loop {
+            let budget = self.remaining();
+            match budget {
+                Err(error) => {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc_kill(-(child.id() as i32), 9);
+                    }
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error);
+                }
+                Ok(left) => {
+                    if let Some(status) = child.try_wait()? {
+                        return Ok(status);
+                    }
+                    std::thread::sleep(left.min(Duration::from_millis(10)));
+                }
+            }
+        }
+    }
+
+    pub fn output(
+        &self,
+        command: &mut std::process::Command,
+    ) -> anyhow::Result<std::process::Output> {
+        use std::io::{Read, Seek};
+        // Files cannot fill a pipe while the parent waits for the deadline.
+        let mut stdout = tempfile::tempfile()?;
+        let mut stderr = tempfile::tempfile()?;
+        command
+            .stdout(stdout.try_clone()?)
+            .stderr(stderr.try_clone()?);
+        let status = self.status(command)?;
+        stdout.rewind()?;
+        stderr.rewind()?;
+        let mut output = std::process::Output {
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        stdout.read_to_end(&mut output.stdout)?;
+        stderr.read_to_end(&mut output.stderr)?;
+        Ok(output)
+    }
+}
+
 /// Ask a process to exit. Best effort: a process that is already gone is not
 /// an error, because that is the outcome the caller wanted.
 pub fn terminate(pid: u32) {
@@ -142,6 +238,35 @@ mod tests {
         fn start_time(&self, pid: u32) -> Option<u64> {
             self.0.get(&pid).copied()
         }
+    }
+
+    #[test]
+    fn an_expired_deadline_does_not_start_a_command() {
+        let deadline = Deadline::new(Duration::ZERO, "test deadline");
+        let error = deadline
+            .status(&mut std::process::Command::new(
+                "nonexistent-deadline-command",
+            ))
+            .unwrap_err();
+        assert!(error.to_string().contains("test deadline"), "{error:#}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_deadline_terminates_descendants_as_well_as_the_shell() {
+        let temp = tempfile::tempdir().unwrap();
+        let marker = temp.path().join("survived");
+        let deadline = Deadline::new(Duration::from_millis(100), "test deadline");
+        let error = deadline
+            .status(
+                std::process::Command::new("/bin/sh")
+                    .args(["-c", "(sleep 0.4; touch \"$1\") & wait", "sh"])
+                    .arg(&marker),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("test deadline"), "{error:#}");
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!marker.exists(), "a descendant survived the deadline");
     }
 
     #[test]

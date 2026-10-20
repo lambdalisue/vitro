@@ -73,6 +73,18 @@ download page to use.
 `--keep-failed` keeps the build's working directory so the serial log and the
 disk survive, and `screenshot` works against a build that is still running.
 
+## A macOS build fails
+
+`vitro build macos --keep-failed` stops the staging VM and keeps it in lume
+for inspection, printing its name. A later build of the same golden replaces
+that staging VM. Without the flag, vitro stops and deletes it after failure.
+Lume can delete a VM during a failed creation itself; vitro cannot retain a
+VM that lume has already removed.
+
+`build_timeout` is shared by installation, boot, key setup and provisioning.
+When it expires, vitro terminates the active subprocess before cleaning up.
+Stopping a VM and restoring an existing golden can take additional time.
+
 ## `vitro exec` runs the wrong thing
 
 Arguments are passed through as separate words. A pipeline or a redirect

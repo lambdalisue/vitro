@@ -389,7 +389,17 @@ pub fn wait_until_reachable(
     ssh: &Path,
     target: &SshTarget,
     timeout: Duration,
+    still_alive: impl FnMut() -> bool,
+) -> Result<Duration> {
+    wait_until_reachable_inner(ssh, target, timeout, still_alive, None)
+}
+
+fn wait_until_reachable_inner(
+    ssh: &Path,
+    target: &SshTarget,
+    timeout: Duration,
     mut still_alive: impl FnMut() -> bool,
+    deadline: Option<&crate::process::Deadline>,
 ) -> Result<Duration> {
     let started = Instant::now();
     let options = SshOptions {
@@ -406,16 +416,18 @@ pub fn wait_until_reachable(
             bail!("the guest stopped before it became reachable");
         }
 
-        let output = Command::new(ssh)
+        let mut command = Command::new(ssh);
+        command
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            // Captured rather than discarded: what ssh says on stderr is the
-            // only thing that separates "not up yet" from "up, and it will
-            // never let this key in".
-            .stderr(Stdio::piped())
-            .output()
-            .with_context(|| format!("cannot run {}", ssh.display()))?;
+            .stderr(Stdio::piped());
+        // Keep SSH's refusal reason for diagnosing a wrong image key.
+        let output = match deadline {
+            Some(deadline) => deadline.output(&mut command),
+            None => command.output().map_err(Into::into),
+        }
+        .with_context(|| format!("cannot run {}", ssh.display()))?;
         if output.status.success() {
             return Ok(started.elapsed());
         }
@@ -451,8 +463,22 @@ pub fn wait_until_reachable(
                 }
             );
         }
-        std::thread::sleep(PROBE_INTERVAL);
+        let pause = match deadline {
+            Some(deadline) => PROBE_INTERVAL.min(deadline.remaining()?),
+            None => PROBE_INTERVAL,
+        };
+        std::thread::sleep(pause);
     }
+}
+
+/// Wait for build SSH without allowing a probe to outlive the build.
+pub fn wait_until_reachable_before(
+    ssh: &Path,
+    target: &SshTarget,
+    deadline: &crate::process::Deadline,
+) -> Result<()> {
+    wait_until_reachable_inner(ssh, target, deadline.remaining()?, || true, Some(deadline))
+        .map(drop)
 }
 
 /// Whether sshd answered and turned the key down.

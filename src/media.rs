@@ -46,15 +46,25 @@ pub fn fetch(
     url: &str,
     out: &Path,
     sha256: Option<&str>,
+    on_progress: impl FnMut(u64, u64) + Send,
+) -> Result<()> {
+    fetch_until(url, out, sha256, on_progress, None)
+}
+
+pub fn fetch_until(
+    url: &str,
+    out: &Path,
+    sha256: Option<&str>,
     mut on_progress: impl FnMut(u64, u64) + Send,
+    deadline: Option<&crate::process::Deadline>,
 ) -> Result<()> {
     if let Some(expected) = sha256 {
-        if out.exists() && checksum(out)? == expected.to_ascii_lowercase() {
+        if out.exists() && checksum_until(out, deadline)? == expected.to_ascii_lowercase() {
             return Ok(());
         }
     }
 
-    let total = content_length(url)?;
+    let total = content_length(url, deadline)?;
 
     // Without a checksum the length is the only thing there is to go on, and it
     // is better than nothing: fetching twenty gigabytes again on every build
@@ -78,7 +88,7 @@ pub fn fetch(
         File::create(&partial).with_context(|| format!("cannot create {}", partial.display()))?;
     file.set_len(total)?;
 
-    let result = fetch_ranges(url, &file, total, &mut on_progress);
+    let result = fetch_ranges(url, &file, total, &mut on_progress, deadline);
     if result.is_err() {
         drop(file);
         let _ = fs::remove_file(&partial);
@@ -88,7 +98,13 @@ pub fn fetch(
     drop(file);
 
     if let Some(expected) = sha256 {
-        let actual = checksum(&partial)?;
+        let actual = match checksum_until(&partial, deadline) {
+            Ok(actual) => actual,
+            Err(error) => {
+                let _ = fs::remove_file(&partial);
+                return Err(error);
+            }
+        };
         if actual != expected.to_ascii_lowercase() {
             let _ = fs::remove_file(&partial);
             bail!("{url} does not match the configured sha256\n  expected {expected}\n  got      {actual}");
@@ -111,6 +127,7 @@ fn fetch_ranges(
     file: &File,
     total: u64,
     on_progress: &mut (impl FnMut(u64, u64) + Send),
+    deadline: Option<&crate::process::Deadline>,
 ) -> Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Mutex;
@@ -138,7 +155,7 @@ fn fetch_ranges(
                     }
                     let end = (offset + CHUNK).min(total) - 1;
 
-                    match fetch_one(url, file, offset, end) {
+                    match fetch_one(url, file, offset, end, deadline) {
                         Ok(written) => {
                             let so_far = done.fetch_add(written, Ordering::Relaxed) + written;
                             // One at a time: the callback is the caller's, and
@@ -165,8 +182,14 @@ fn fetch_ranges(
 }
 
 /// Fetch one range and put it where it belongs, returning how much arrived.
-fn fetch_one(url: &str, file: &File, offset: u64, end: u64) -> Result<u64> {
-    let bytes = fetch_range(url, offset, end)?;
+fn fetch_one(
+    url: &str,
+    file: &File,
+    offset: u64,
+    end: u64,
+    deadline: Option<&crate::process::Deadline>,
+) -> Result<u64> {
+    let bytes = fetch_range(url, offset, end, deadline)?;
     let want = (end - offset + 1) as usize;
     if bytes.len() != want {
         bail!(
@@ -195,8 +218,11 @@ fn write_at(file: &File, mut bytes: &[u8], mut offset: u64) -> Result<()> {
     Ok(())
 }
 
-fn content_length(url: &str) -> Result<u64> {
+fn content_length(url: &str, deadline: Option<&crate::process::Deadline>) -> Result<u64> {
     let response = ureq::head(url)
+        .config()
+        .timeout_global(deadline.map(|d| d.remaining()).transpose()?)
+        .build()
         .call()
         .with_context(|| format!("cannot reach {url}"))?;
     response
@@ -209,10 +235,15 @@ fn content_length(url: &str) -> Result<u64> {
         })
 }
 
-fn fetch_range(url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
+fn fetch_range(
+    url: &str,
+    from: u64,
+    to: u64,
+    deadline: Option<&crate::process::Deadline>,
+) -> Result<Vec<u8>> {
     let mut last = None;
     for _ in 0..ATTEMPTS {
-        match try_range(url, from, to) {
+        match try_range(url, from, to, deadline) {
             Ok(bytes) => return Ok(bytes),
             Err(e) => last = Some(e),
         }
@@ -220,8 +251,16 @@ fn fetch_range(url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
     Err(last.unwrap_or_else(|| anyhow::anyhow!("cannot fetch {url}")))
 }
 
-fn try_range(url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
+fn try_range(
+    url: &str,
+    from: u64,
+    to: u64,
+    deadline: Option<&crate::process::Deadline>,
+) -> Result<Vec<u8>> {
     let mut response = ureq::get(url)
+        .config()
+        .timeout_global(deadline.map(|d| d.remaining()).transpose()?)
+        .build()
         .header("range", format!("bytes={from}-{to}"))
         .call()
         .with_context(|| format!("cannot fetch bytes {from}-{to} of {url}"))?;
@@ -232,10 +271,17 @@ fn try_range(url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
 
 /// The lowercase hex SHA-256 of a file.
 pub fn checksum(path: &Path) -> Result<String> {
+    checksum_until(path, None)
+}
+
+fn checksum_until(path: &Path, deadline: Option<&crate::process::Deadline>) -> Result<String> {
     let mut file = File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 1024 * 1024];
     loop {
+        if let Some(deadline) = deadline {
+            deadline.remaining()?;
+        }
         let read = file.read(&mut buffer)?;
         if read == 0 {
             break;
@@ -247,7 +293,15 @@ pub fn checksum(path: &Path) -> Result<String> {
 
 /// Check a file already on disk, so a local path can be verified too.
 pub fn verify(path: &Path, sha256: &str) -> Result<()> {
-    let actual = checksum(path)?;
+    verify_until(path, sha256, None)
+}
+
+pub fn verify_until(
+    path: &Path,
+    sha256: &str,
+    deadline: Option<&crate::process::Deadline>,
+) -> Result<()> {
+    let actual = checksum_until(path, deadline)?;
     let expected = sha256.to_ascii_lowercase();
     if actual != expected {
         bail!(
@@ -265,6 +319,60 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_downloads_cannot_outlive_the_build_deadline() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        for stall_body in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/restore.ipsw", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut connection, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                assert!(connection.read(&mut request).unwrap() > 0);
+                if stall_body {
+                    connection
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                    drop(connection);
+                    let (mut connection, _) = listener.accept().unwrap();
+                    assert!(connection.read(&mut request).unwrap() > 0);
+                    connection.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 4\r\nConnection: close\r\n\r\n").unwrap();
+                    std::thread::sleep(Duration::from_secs(2));
+                } else {
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+            });
+            let temp = tempfile::tempdir().unwrap();
+            let out = temp.path().join("restore.ipsw");
+            let deadline =
+                crate::process::Deadline::new(Duration::from_millis(150), "build_timeout");
+            let started = Instant::now();
+            let result = fetch_until(&url, &out, None, |_, _| {}, Some(&deadline));
+            assert!(result.is_err(), "{result:?}");
+            assert!(started.elapsed() < Duration::from_secs(1));
+            assert!(!out.exists());
+            assert!(!out.with_extension("part").exists());
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn an_expired_deadline_prevents_checksum_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("restore.ipsw");
+        fs::write(&path, b"restore").unwrap();
+        let deadline = crate::process::Deadline::new(std::time::Duration::ZERO, "build_timeout");
+        assert!(checksum_until(&path, Some(&deadline))
+            .unwrap_err()
+            .to_string()
+            .contains("build_timeout"));
+    }
 
     #[test]
     fn a_cached_file_of_the_right_length_is_reused_when_there_is_no_checksum() {

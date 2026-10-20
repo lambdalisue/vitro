@@ -318,7 +318,7 @@ fn starter_config(starter: Starter, firmware: &Firmware, windows_iso: Option<&st
             )
         }
         Starter::Macos => "[defaults]\n\
-             ssh_user = \"dev\"\n\
+             ssh_user = \"lume\"\n\
              cpus     = 4\n\
              memory   = \"8G\"\n\
              \n\
@@ -442,6 +442,18 @@ mod tests {
             let text = starter_config(starter, &Firmware::Found("/q/edk2.fd".into()), None);
             parses(&text, &paths, temp.path());
         }
+    }
+
+    #[test]
+    fn the_macos_starter_connects_as_the_account_the_preset_creates() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = Paths::from_env(&Default::default(), temp.path());
+        let text = starter_config(Starter::Macos, &Firmware::NotNeeded, None);
+        let config = parses(&text, &paths, temp.path());
+        assert_eq!(
+            config.image("macos").unwrap().ssh_user,
+            crate::lume::PRESET_USER
+        );
     }
 
     #[test]

@@ -202,7 +202,7 @@ pub fn build(paths: &Paths, config: &Config, options: &Options) -> Result<Built>
         crate::script::check(script, image.guest).context("provision script")?;
     }
     if spec.kind == BuildKind::LumeIpsw {
-        return build_lume(paths, config, image, spec);
+        return build_lume(paths, config, image, spec, options.keep_failed);
     }
 
     let unattended_kind = spec.kind == BuildKind::UnattendedInstall;
@@ -312,8 +312,15 @@ pub fn build(paths: &Paths, config: &Config, options: &Options) -> Result<Built>
 /// vitro owns, so the golden image is a name rather than a path. The install
 /// itself is unattended because `lume`'s preset does the setup assistant's job
 /// offline — vitro has no answer-file equivalent for macOS and needs none.
-fn build_lume(paths: &Paths, config: &Config, image: &Image, spec: &Build) -> Result<Built> {
+fn build_lume(
+    paths: &Paths,
+    config: &Config,
+    image: &Image,
+    spec: &Build,
+    keep_failed: bool,
+) -> Result<Built> {
     let started = Instant::now();
+    let deadline = crate::process::Deadline::new(spec.build_timeout, "build_timeout");
     let Golden::VmName(golden) = &image.golden else {
         bail!(
             "image {:?} uses the lume backend, so `golden` must name a VM rather than a disk",
@@ -326,35 +333,74 @@ fn build_lume(paths: &Paths, config: &Config, image: &Image, spec: &Build) -> Re
         // `latest` is the point of this backend: which macOS builds install on
         // which host is Apple's business, and lume is what tracks it.
         Source::Latest => {
-            let url = lume::latest_ipsw(&binary)?;
+            let url = lume::run_until(&binary, &["ipsw".into()], &deadline)?;
+            let url = lume::parse_ipsw_url(&url)?;
             let cached = media::cache_path(&paths.media_cache_dir(), &url);
-            media::fetch(&url, &cached, spec.sha256.as_deref(), report_progress)?;
+            media::fetch_until(
+                &url,
+                &cached,
+                spec.sha256.as_deref(),
+                report_progress,
+                Some(&deadline),
+            )?;
             cached
         }
-        _ => resolve_media(paths, spec, None)?,
+        Source::Url(url) => {
+            let cached = media::cache_path(&paths.media_cache_dir(), &url);
+            media::fetch_until(
+                &url,
+                &cached,
+                spec.sha256.as_deref(),
+                report_progress,
+                Some(&deadline),
+            )?;
+            cached
+        }
+        Source::LocalPath(path) => {
+            if !path.exists() {
+                bail!("{} does not exist", path.display());
+            }
+            if let Some(sha) = &spec.sha256 {
+                media::verify_until(&path, sha, Some(&deadline))?;
+            }
+            path
+        }
     };
 
     // Built under a working name and renamed by cloning at the end, so a build
     // that fails part-way never leaves something `run` would start.
     let staging = format!("{golden}-building");
-    let _ = lume::run(&binary, &lume::delete_args(&staging));
+    let _ = lume::run_until(&binary, &lume::delete_args(&staging), &deadline);
 
-    lume::run_visibly(
-        &binary,
-        &lume::create_args(&lume::CreateSpec {
-            name: &staging,
-            ipsw: &ipsw,
-            cpus: image.cpus,
-            memory: image.memory,
-            disk_size: spec.disk_size,
-            unattended: spec.unattended.as_deref(),
-        }),
-    )?;
+    let result = (|| {
+        lume::run_visibly(
+            &binary,
+            &lume::create_args(&lume::CreateSpec {
+                name: &staging,
+                ipsw: &ipsw,
+                cpus: image.cpus,
+                memory: image.memory,
+                disk_size: spec.disk_size,
+                unattended: spec.unattended.as_deref(),
+            }),
+            &deadline,
+        )?;
 
-    let result = finish_lume(&binary, config, paths, image, spec, golden, &staging);
+        finish_lume(
+            &binary, config, paths, image, spec, golden, &staging, &deadline,
+        )
+    })();
     if result.is_err() {
-        let _ = lume::stop(&binary, &staging);
-        let _ = lume::run(&binary, &lume::delete_args(&staging));
+        let _ = lume::stop_until(&binary, &staging, &lume_cleanup_deadline());
+        if keep_failed {
+            eprintln!("vitro: kept failed build VM {staging}; lume may already have removed it if creation failed");
+        } else {
+            let _ = lume::run_until(
+                &binary,
+                &lume::delete_args(&staging),
+                &lume_cleanup_deadline(),
+            );
+        }
     }
     result?;
 
@@ -365,11 +411,21 @@ fn build_lume(paths: &Paths, config: &Config, image: &Image, spec: &Build) -> Re
     })
 }
 
+fn lume_cleanup_deadline() -> crate::process::Deadline {
+    crate::process::Deadline::new(Duration::from_secs(120), "lume cleanup timeout")
+        .uninterruptible()
+}
+
 /// Authorise vitro's key in the account the preset made.
 ///
 /// Through `lume ssh`, which handles the preset's password, because this is the
 /// one moment vitro has no key to connect with.
-fn install_key(binary: &Path, staging: &str, image: &Image) -> Result<()> {
+fn install_key(
+    binary: &Path,
+    staging: &str,
+    image: &Image,
+    deadline: &crate::process::Deadline,
+) -> Result<()> {
     let public_key = format!("{}.pub", image.ssh_key.display());
     let key =
         fs::read_to_string(&public_key).with_context(|| format!("cannot read {public_key}"))?;
@@ -382,7 +438,7 @@ fn install_key(binary: &Path, staging: &str, image: &Image) -> Result<()> {
          printf '%s\\n' '{key}' >> ~/.ssh/authorized_keys && \
          chmod 600 ~/.ssh/authorized_keys"
     );
-    lume::run(binary, &lume::ssh_args(staging, &command))
+    lume::run_until(binary, &lume::ssh_args(staging, &command), deadline)
         .with_context(|| format!("cannot authorise vitro's key in {staging}"))?;
     Ok(())
 }
@@ -397,16 +453,16 @@ fn finish_lume(
     spec: &Build,
     golden: &str,
     staging: &str,
+    deadline: &crate::process::Deadline,
 ) -> Result<()> {
     // Always, not only for a provision script: the preset leaves an account
     // with a password lume publishes, and vitro reaches every other guest with
     // a key. `provision` cannot be what installs it, because `provision` is
     // run over the connection the key is for.
-    lume::run(binary, &lume::run_args(staging))?;
-    // One ceiling covering both waits, not one each.
-    let booting = Instant::now();
-    let address = lume::wait_until_ready(binary, staging, spec.build_timeout)?;
-    install_key(binary, staging, image)?;
+    let run = |args: &[String]| lume::run_until(binary, args, deadline);
+    run(&lume::run_args(staging))?;
+    let address = lume::wait_until_ready_before(binary, staging, deadline)?;
+    install_key(binary, staging, image, deadline)?;
 
     if let Some(script) = &spec.provision {
         let cfg_tools = config.tools();
@@ -426,14 +482,20 @@ fn finish_lume(
             key: image.ssh_key.clone(),
             known_hosts: dir.join(KNOWN_HOSTS),
         };
-        let left = ssh::remaining(spec.build_timeout, booting.elapsed());
-        ssh::wait_until_reachable(&ssh, &target, left, || true)?;
-        let provisioned = provision(&ssh, &scp, &target, image.guest, script);
+        let provisioned = (|| {
+            ssh::wait_until_reachable_before(&ssh, &target, deadline)?;
+            let code =
+                crate::script::run_until(&ssh, &scp, &target, image.guest, script, deadline)?;
+            if code != 0 {
+                bail!("the provision script exited with {code}");
+            }
+            Ok(())
+        })();
         let _ = fs::remove_dir_all(&dir);
         provisioned?;
     }
 
-    lume::stop(binary, staging)?;
+    lume::stop_until(binary, staging, deadline)?;
 
     // A clone on APFS is made by reference, so this is seconds rather than the
     // minutes a copy of tens of gigabytes would take.
@@ -442,30 +504,43 @@ fn finish_lume(
     // means a failed clone leaves neither the new image nor the one that was
     // working before it.
     let previous = format!("{golden}-previous");
-    let had_one = lume::get(binary, golden).is_ok();
+    deadline.remaining()?;
+    let had_one = lume::get_until(binary, golden, deadline).is_ok();
+    deadline.remaining()?;
     if had_one {
-        let _ = lume::run(binary, &lume::delete_args(&previous));
-        lume::run(binary, &lume::clone_args(golden, &previous))?;
-        lume::run(binary, &lume::delete_args(golden))?;
+        let _ = run(&lume::delete_args(&previous));
+        run(&lume::clone_args(golden, &previous))?;
     }
 
-    match lume::run(binary, &lume::clone_args(staging, golden)) {
-        Ok(_) => {
-            if had_one {
-                let _ = lume::run(binary, &lume::delete_args(&previous));
-            }
-            lume::run(binary, &lume::delete_args(staging))?;
-            Ok(())
+    let published = (|| {
+        if had_one {
+            run(&lume::delete_args(golden))?;
         }
-        Err(e) => {
-            if had_one {
-                // Put back what was working. Nothing else knows it is there.
-                let _ = lume::run(binary, &lume::clone_args(&previous, golden));
-                let _ = lume::run(binary, &lume::delete_args(&previous));
+        run(&lume::clone_args(staging, golden))
+    })();
+    if let Err(error) = published {
+        if had_one {
+            // Expiry or Ctrl-C must not prevent restoring the working image.
+            let recovery = lume_cleanup_deadline();
+            let _ = lume::run_until(binary, &lume::delete_args(golden), &recovery);
+            match lume::run_until(binary, &lume::clone_args(&previous, golden), &recovery) {
+                Ok(_) => {
+                    let _ = lume::run_until(binary, &lume::delete_args(&previous), &recovery);
+                }
+                Err(restore) => {
+                    return Err(error).context(format!(
+                        "cannot restore {golden}: {restore:#}; backup kept as {previous}"
+                    ));
+                }
             }
-            Err(e)
         }
+        return Err(error);
     }
+    if had_one {
+        let _ = run(&lume::delete_args(&previous));
+    }
+    run(&lume::delete_args(staging))?;
+    Ok(())
 }
 
 fn resolve_media(paths: &Paths, spec: &Build, arch: Option<unattend::Arch>) -> Result<PathBuf> {

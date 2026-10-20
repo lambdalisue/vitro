@@ -32,7 +32,7 @@ pub enum Command {
     Build {
         /// An `[images.*]` key from the configuration
         image: String,
-        /// Keep the working directory when the build fails
+        /// Keep the working directory or lume VM when the build fails
         #[arg(long)]
         keep_failed: bool,
     },
