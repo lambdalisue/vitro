@@ -381,13 +381,24 @@ fn build_lume(
                 cpus: image.cpus,
                 memory: image.memory,
                 disk_size: spec.disk_size,
-                unattended: spec.unattended.as_deref(),
             }),
             &deadline,
         )?;
+        let unchecked = match spec.unattended.as_deref() {
+            Some(preset) => set_up(&binary, &staging, preset, &deadline)?,
+            None => None,
+        };
 
         finish_lume(
-            &binary, config, paths, image, spec, golden, &staging, &deadline,
+            &binary,
+            config,
+            paths,
+            image,
+            spec,
+            golden,
+            &staging,
+            unchecked.as_ref(),
+            &deadline,
         )
     })();
     if result.is_err() {
@@ -414,6 +425,90 @@ fn build_lume(
 fn lume_cleanup_deadline() -> crate::process::Deadline {
     crate::process::Deadline::new(Duration::from_secs(120), "lume cleanup timeout")
         .uninterruptible()
+}
+
+/// Apply lume's unattended `preset` to the installed VM, and say why lume could
+/// not check the result if it could not.
+///
+/// A failed check is not the end of the build: lume connects for it with
+/// swift-nio-ssh alone, which cannot reach every guest the system ssh can.
+/// Whether the setup took is then for [`finish_lume`] to find out. Any other
+/// failure leaves a guest nobody can log in to, so it ends the build.
+fn set_up(
+    binary: &Path,
+    staging: &str,
+    preset: &str,
+    deadline: &crate::process::Deadline,
+) -> Result<Option<anyhow::Error>> {
+    let mut attempts = 0;
+    loop {
+        let error = match lume::run_visibly(binary, &lume::setup_args(staging, preset), deadline) {
+            Ok(()) => return Ok(None),
+            Err(error) => error,
+        };
+        // Running out of time or being interrupted is not lume's check failing.
+        deadline.remaining()?;
+        crate::signals::check()?;
+        attempts += 1;
+        // The installer lets go of the VM a moment after `create` returns;
+        // lume waits for that itself only inside `create --unattended`.
+        if lume::was_still_held(&error) && attempts < SETUP_ATTEMPTS {
+            eprintln!("vitro: {staging} is still held by its installer; setting it up again");
+            std::thread::sleep(SETUP_RETRY_INTERVAL.min(deadline.remaining()?));
+            continue;
+        }
+        if !lume::failed_its_check(&error) {
+            return Err(error.context(format!("cannot set up {staging}")));
+        }
+        eprintln!(
+            "vitro: lume setup could not check {staging} itself ({error:#}); checking it over the system ssh"
+        );
+        return Ok(Some(error));
+    }
+}
+
+const SETUP_ATTEMPTS: u32 = 5;
+const SETUP_RETRY_INTERVAL: Duration = Duration::from_secs(3);
+
+/// What lume does as root once its own check has logged in to the guest, and
+/// so leaves undone when that check cannot connect: lume 0.5.3's
+/// `guestFinalizationScript`, which settles the setup assistant, the automatic
+/// logon and SSH from inside the guest after the offline setup wrote them to
+/// its disk.
+fn finish_setup_script() -> String {
+    let user = lume::PRESET_USER;
+    format!(
+        "set -e
+touch /var/db/.AppleSetupDone
+chown root:wheel /var/db/.AppleSetupDone
+chmod 644 /var/db/.AppleSetupDone
+defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string {user}
+defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+defaults write /Library/Preferences/com.apple.loginwindow lastUser -string loggedIn
+defaults write /Library/Preferences/com.apple.loginwindow lastUserName -string {user}
+defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeCloudSetup -bool true
+defaults write /Library/Preferences/com.apple.SetupAssistant DidSeePrivacy -bool true
+defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeSiriSetup -bool true
+defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTouchIDSetup -bool true
+defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeTrueToneSetup -bool true
+diskutil apfs updatePreboot / >/dev/null
+launchctl enable system/com.openssh.sshd"
+    )
+}
+
+/// Do in the guest what lume's check would have done, through `lume ssh`,
+/// whose fallback to the system ssh reaches a guest its own client cannot.
+fn finish_setup(binary: &Path, staging: &str, deadline: &crate::process::Deadline) -> Result<()> {
+    // The script holds no single quote, so it stays one word for the guest's
+    // shell; sudo reads the preset's password from its standard input.
+    let command = format!(
+        "printf '%s\\n' '{}' | sudo -S /bin/sh -c '{}'",
+        lume::PRESET_PASSWORD,
+        finish_setup_script()
+    );
+    lume::run_until(binary, &lume::ssh_args(staging, &command), deadline)
+        .with_context(|| format!("cannot finish setting up {staging}"))?;
+    Ok(())
 }
 
 /// Authorise vitro's key in the account the preset made.
@@ -453,6 +548,7 @@ fn finish_lume(
     spec: &Build,
     golden: &str,
     staging: &str,
+    unchecked: Option<&anyhow::Error>,
     deadline: &crate::process::Deadline,
 ) -> Result<()> {
     // Always, not only for a provision script: the preset leaves an account
@@ -460,9 +556,21 @@ fn finish_lume(
     // a key. `provision` cannot be what installs it, because `provision` is
     // run over the connection the key is for.
     let run = |args: &[String]| lume::run_until(binary, args, deadline);
-    run(&lume::run_args(staging))?;
-    let address = lume::wait_until_ready_before(binary, staging, deadline)?;
-    install_key(binary, staging, image, deadline)?;
+    let reached = (|| -> Result<String> {
+        run(&lume::run_args(staging))?;
+        let address = lume::wait_until_ready_before(binary, staging, deadline)?;
+        if unchecked.is_some() {
+            finish_setup(binary, staging, deadline)?;
+        }
+        install_key(binary, staging, image, deadline)?;
+        Ok(address)
+    })();
+    let address = match (reached, unchecked) {
+        (Err(error), Some(why)) => {
+            return Err(error.context(format!("lume setup had already failed: {why:#}")))
+        }
+        (reached, _) => reached?,
+    };
     run(&lume::ssh_args(
         staging,
         &lume::quiet_setup_assistant_command(),

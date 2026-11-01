@@ -1347,7 +1347,7 @@ fn macos_build_sandbox(timeout: &str, body: &str) -> Sandbox {
 #[cfg(unix)]
 #[test]
 fn macos_build_deadline_bounds_each_backend_process() {
-    for phase in ["create", "run", "get", "ssh", "clone"] {
+    for phase in ["create", "setup", "run", "get", "ssh", "clone"] {
         let body = format!(
             r#"
             [ "$1" = "{phase}" ] && exec sleep 3
@@ -1369,6 +1369,125 @@ fn macos_build_deadline_bounds_each_backend_process() {
             "{phase}"
         );
     }
+}
+
+/// A `lume` whose `setup` fails its own check of the guest, as lume 0.5.3's
+/// does against macOS 26.6.2, and whose `ssh` exits with `ssh_status`.
+#[cfg(unix)]
+fn lume_failing_its_setup_check(ssh_status: u8) -> String {
+    format!(
+        r#"
+        [ "$1" = setup ] && {{ echo "Health check 'ssh' failed" >&2; exit 1; }}
+        [ "$1" = ssh ] && exit {ssh_status}
+        [ "$1" = get ] && {{
+            [ "$2" = tahoe-base ] && exit 1
+            printf '%s\n' '{{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}}'
+        }}
+        exit 0
+    "#
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_build_finishes_the_guest_itself_when_lume_cannot_check_its_setup() {
+    let sandbox = macos_build_sandbox("10s", &lume_failing_its_setup_check(0));
+
+    sandbox.run(&["build", "macos"]).success();
+
+    let calls = sandbox.calls("lume");
+    let at = |prefix: &str| {
+        calls
+            .iter()
+            .position(|c| c.starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix:?} in {calls:?}"))
+    };
+    let create = &calls[at("create tahoe-base-building ")];
+    assert!(!create.contains("--unattended"), "{create}");
+    let setup = at("setup tahoe-base-building --unattended tahoe");
+    let finish = calls
+        .iter()
+        .position(|c| c.starts_with("ssh tahoe-base-building ") && c.contains("sudo -S /bin/sh -c"))
+        .unwrap_or_else(|| panic!("no finishing ssh in {calls:?}"));
+    let key = calls
+        .iter()
+        .position(|c| c.starts_with("ssh tahoe-base-building ") && c.contains("authorized_keys"))
+        .unwrap_or_else(|| panic!("no key ssh in {calls:?}"));
+    assert!(setup < finish && finish < key, "{calls:?}");
+    at("clone tahoe-base-building tahoe-base");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_build_that_cannot_reach_the_guest_says_what_lume_setup_said() {
+    let sandbox = macos_build_sandbox("10s", &lume_failing_its_setup_check(1));
+
+    sandbox
+        .run(&["build", "macos"])
+        .failure()
+        .stderr_contains("lume setup");
+
+    assert!(
+        !sandbox
+            .calls("lume")
+            .iter()
+            .any(|c| c.starts_with("clone ")),
+        "{:?}",
+        sandbox.calls("lume")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_build_sets_the_guest_up_again_while_the_installer_still_holds_it() {
+    // lume 0.5.3 waits for this itself only inside `create --unattended`.
+    let body = r#"
+        [ "$1" = setup ] && [ ! -e "$0.released" ] && {
+            touch "$0.released"
+            echo "Error: Invalid virtual machine configuration. Failed to lock auxiliary storage." >&2
+            exit 1
+        }
+        [ "$1" = get ] && {
+            [ "$2" = tahoe-base ] && exit 1
+            printf '%s\n' '{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}'
+        }
+        exit 0
+    "#;
+    let sandbox = macos_build_sandbox("20s", body);
+
+    sandbox.run(&["build", "macos"]).success();
+
+    let calls = sandbox.calls("lume");
+    let setups = calls.iter().filter(|c| c.starts_with("setup ")).count();
+    assert_eq!(setups, 2, "{calls:?}");
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("ssh ") && c.contains("sudo -S /bin/sh -c")),
+        "{calls:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_build_whose_setup_fails_before_its_check_stops_there() {
+    let body = r#"
+        [ "$1" = setup ] && { echo "Error: the preset could not be applied" >&2; exit 1; }
+        [ "$1" = get ] && {
+            [ "$2" = tahoe-base ] && exit 1
+            printf '%s\n' '{"status":"running","ipAddress":"192.0.2.1","sshAvailable":true}'
+        }
+        exit 0
+    "#;
+    let sandbox = macos_build_sandbox("10s", body);
+
+    sandbox
+        .run(&["build", "macos"])
+        .failure()
+        .stderr_contains("the preset could not be applied");
+
+    let calls = sandbox.calls("lume");
+    assert!(!calls.iter().any(|c| c.starts_with("run ")), "{calls:?}");
 }
 
 #[cfg(unix)]

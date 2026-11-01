@@ -81,6 +81,18 @@ that staging VM. Without the flag, vitro stops and deletes it after failure.
 Lume can delete a VM during a failed creation itself; vitro cannot retain a
 VM that lume has already removed.
 
+`lume setup could not check … itself; checking it over the system ssh` is not a
+failure on its own. lume checks its unattended setup by logging in with an SSH
+client of its own, which cannot connect to some guests the system ssh reaches,
+such as macOS 26.6.2. vitro then starts the VM, finishes what that check would
+have done through `lume ssh`, and goes on. Only if that fails too does the build
+fail, with lume's reason beside vitro's. A setup that fails before its check
+leaves a guest nobody can log in to, so it ends the build at once.
+
+`… is still held by its installer; setting it up again` is not a failure either.
+The installer lets go of the VM a few seconds after the installation ends, and
+lume waits for that only when it installs and sets up in one command.
+
 `build_timeout` is shared by installation, boot, key setup and provisioning.
 When it expires, vitro terminates the active subprocess before cleaning up.
 Stopping a VM and restoring an existing golden can take additional time.

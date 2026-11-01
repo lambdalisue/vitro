@@ -163,7 +163,8 @@ unattended = "tahoe"
 
 vitro delegates entirely to [`lume`](https://github.com/trycua/cua): it asks
 lume to install macOS from a restore image and to apply its own unattended
-preset, then authorises your key and clones the result into a golden VM. There
+preset to it, makes sure the guest can be logged in to over the system ssh,
+then authorises your key and clones the result into a golden VM. There
 is no answer file on vitro's side, and `source = "latest"` asks lume which
 restore image is current and fetches it.
 

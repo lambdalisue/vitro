@@ -57,14 +57,6 @@ pub struct CreateSpec<'a> {
     pub cpus: u32,
     pub memory: ByteSize,
     pub disk_size: Option<ByteSize>,
-    /// A built-in preset name such as `tahoe`, or a path to a YAML file.
-    ///
-    /// This is what makes a macOS install unattended: it creates the account,
-    /// turns on SSH and automatic logon, and stops the machine sleeping or
-    /// locking, none of which can be done through the setup assistant without
-    /// somebody clicking. vitro has no answer-file equivalent for macOS and
-    /// does not need one.
-    pub unattended: Option<&'a str>,
 }
 
 pub fn create_args(spec: &CreateSpec<'_>) -> Vec<String> {
@@ -85,11 +77,29 @@ pub fn create_args(spec: &CreateSpec<'_>) -> Vec<String> {
         args.push("--disk-size".into());
         args.push(format!("{}MB", size.mib()));
     }
-    if let Some(preset) = spec.unattended {
-        args.push("--unattended".into());
-        args.push(preset.to_string());
-    }
     args
+}
+
+/// Apply `preset`, a built-in name such as `tahoe` or a path to a YAML file,
+/// to an installed VM.
+///
+/// This is what makes a macOS install unattended: it creates the account,
+/// turns on SSH and automatic logon, and stops the machine sleeping or
+/// locking, none of which can be done through the setup assistant without
+/// somebody clicking. vitro has no answer-file equivalent for macOS and does
+/// not need one.
+///
+/// Asked of `setup` rather than of `create --unattended`, which does the same
+/// but deletes the VM when lume's own check of it fails. That check connects
+/// with swift-nio-ssh alone, which cannot reach the OpenSSH 10.3 of macOS
+/// 26.6.2, so it fails on a guest the system ssh logs in to.
+pub fn setup_args(name: &str, preset: &str) -> Vec<String> {
+    vec![
+        "setup".into(),
+        name.into(),
+        "--unattended".into(),
+        preset.into(),
+    ]
 }
 
 pub fn run_args(name: &str) -> Vec<String> {
@@ -166,12 +176,13 @@ pub const PRESET_USER: &str = "lume";
 pub const PRESET_PASSWORD: &str = "lume";
 
 /// Run a command in the guest through `lume`, which knows the preset's
-/// password.
+/// password, and which falls back to the system ssh when its own client cannot
+/// connect.
 ///
-/// Only used once per build, to put vitro's key in place. Everything after that
-/// is vitro's own SSH, with the key — `lume ssh` authenticates with a password
-/// by default, and a password shared by every VM lume creates is not something
-/// to keep reaching for.
+/// Only used while a build finishes the guest and puts vitro's key in place.
+/// Everything after that is vitro's own SSH, with the key — `lume ssh`
+/// authenticates with a password by default, and a password shared by every
+/// VM lume creates is not something to keep reaching for.
 pub fn ssh_args(name: &str, command: &str) -> Vec<String> {
     vec![
         "ssh".into(),
@@ -289,24 +300,45 @@ fn run_inner(
 ///
 /// Installing macOS runs for several minutes. Capturing its output would mean
 /// showing nothing at all until it finished, which is indistinguishable from
-/// vitro having hung.
+/// vitro having hung. Its progress is written to stdout, so only stderr, where
+/// lume says why it failed, is held back, to be passed on and put in the error.
 pub fn run_visibly(binary: &Path, args: &[String], deadline: &process::Deadline) -> Result<()> {
+    use std::io::{Read, Seek};
+    let mut stderr = tempfile::tempfile()?;
     let status = deadline
         .status(
             Command::new(binary)
                 .args(args)
                 .env(TELEMETRY_OFF.0, TELEMETRY_OFF.1)
-                .stdin(std::process::Stdio::null()),
+                .stdin(std::process::Stdio::null())
+                .stderr(stderr.try_clone()?),
         )
         .with_context(|| format!("cannot run {}", binary.display()))?;
+    let mut said = String::new();
+    stderr.rewind()?;
+    stderr.read_to_string(&mut said)?;
+    eprint!("{said}");
 
     if !status.success() {
         bail!(
-            "lume {} failed with {status}",
-            args.first().map(String::as_str).unwrap_or("")
+            "lume {} failed with {status}: {}",
+            args.first().map(String::as_str).unwrap_or(""),
+            said.trim()
         );
     }
     Ok(())
+}
+
+/// Whether lume failed because the VM was still held by the process that last
+/// ran it, which lets go of it a few seconds after exiting.
+pub fn was_still_held(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("Failed to lock auxiliary storage")
+}
+
+/// Whether lume's unattended setup got as far as its own check of the guest,
+/// and failed there.
+pub fn failed_its_check(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("Health check")
 }
 
 pub fn get(binary: &Path, name: &str) -> Result<VmInfo> {
@@ -421,7 +453,6 @@ mod tests {
             cpus: 4,
             memory: ByteSize::from_gib(8),
             disk_size: None,
-            unattended: Some("tahoe"),
         }
     }
 
@@ -439,22 +470,20 @@ mod tests {
     }
 
     #[test]
-    fn the_preset_is_what_makes_the_install_unattended() {
+    fn creating_a_vm_only_installs_it() {
+        // `create --unattended` deletes the VM when lume's own check of the
+        // setup fails, which leaves nothing for vitro to check instead.
         let args = create_args(&spec()).join(" ");
 
-        assert!(args.contains("--unattended tahoe"), "{args}");
         assert!(args.contains("--ipsw /media/restore.ipsw"), "{args}");
+        assert!(!args.contains("--unattended"), "{args}");
     }
 
     #[test]
-    fn a_created_vm_without_a_preset_asks_for_no_setup_at_all() {
-        let args = create_args(&CreateSpec {
-            unattended: None,
-            ..spec()
-        })
-        .join(" ");
+    fn the_preset_is_applied_to_the_installed_vm_by_setup() {
+        let args = setup_args("macos", "tahoe").join(" ");
 
-        assert!(!args.contains("--unattended"), "{args}");
+        assert_eq!(args, "setup macos --unattended tahoe");
     }
 
     #[test]
