@@ -13,13 +13,32 @@ use std::process::{Command, Output};
 /// A throwaway home directory plus a `bin` directory that shadows PATH.
 pub struct Sandbox {
     temp: tempfile::TempDir,
+    _exclusive: Option<std::sync::MutexGuard<'static, ()>>,
 }
 
 impl Sandbox {
     pub fn new() -> Self {
         let temp = tempfile::tempdir().expect("temporary directory");
         fs::create_dir_all(temp.path().join("bin")).expect("bin directory");
-        Self { temp }
+        Self {
+            temp,
+            _exclusive: None,
+        }
+    }
+
+    /// A sandbox no other exclusive one runs beside.
+    ///
+    /// For tests whose lume guests share a name: vitro finds the process
+    /// holding a guest by its command line across the whole machine, so one
+    /// test stopping its guest would otherwise stop another test's.
+    #[cfg(unix)]
+    pub fn exclusive() -> Self {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        Self {
+            _exclusive: Some(guard),
+            ..Self::new()
+        }
     }
 
     pub fn home(&self) -> &Path {

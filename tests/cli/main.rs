@@ -1319,7 +1319,7 @@ fn the_fake_binary_scaffolding_shadows_path_and_records_arguments() {
 
 #[cfg(unix)]
 fn macos_build_sandbox(timeout: &str, body: &str) -> Sandbox {
-    let sandbox = Sandbox::new();
+    let sandbox = Sandbox::exclusive();
     sandbox.write_file("restore.ipsw", b"restore");
     sandbox.write_file(
         ".local/share/vitro/ssh/id_ed25519.pub",
