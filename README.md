@@ -405,7 +405,8 @@ stamps the tag into it. The flake stamps it too, without being told the tag:
 carries the tag in it. From there the workflow builds a binary on a
 native runner for each of the six supported targets, attaches them to the
 release with their checksums, builds the flake from the tag into the Cachix
-cache, and publishes to crates.io once every target has built — because
+cache once GitHub stops serving the archive it made of the commit before the
+tag existed, and publishes to crates.io once every target has built — because
 that is the one step that cannot be undone. It authenticates with crates.io
 through trusted publishing, so there is no registry token in the repository's
 secrets.

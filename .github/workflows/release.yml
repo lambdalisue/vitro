@@ -199,12 +199,35 @@ jobs:
               -c credential.helper='!f() { echo username=x-access-token; echo "password=$TAP_TOKEN"; }; f' \
               push origin HEAD:main
 
+  # GitHub keeps serving the archive it made of a commit before the commit was
+  # tagged, VERSION and all, for a while after the tag exists — and CI has
+  # always made one, since main takes nothing but pull requests. Nix resolves
+  # the tag to that commit and fetches one of these two endpoints, depending on
+  # whether it holds a token, so the build below waits until both name the
+  # release rather than building, and caching, the commit's description.
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      SHA: ${{ github.sha }}
+    steps:
+      - name: Wait until GitHub's archives of the tag name the release
+        run: |
+          for endpoint in legacy.tar.gz tar.gz; do
+            url="https://codeload.github.com/${GITHUB_REPOSITORY}/${endpoint}/${SHA}"
+            until [ "$(curl -fsSL "$url" | tar -xzOf - --wildcards '*/VERSION')" = "$TAG" ]; do
+              echo "${endpoint} does not name ${TAG} yet; asking again in a minute"
+              sleep 60
+            done
+            echo "${endpoint} names ${TAG}"
+          done
+
   # The flake as `nix profile install github:lambdalisue/vitro/vX.Y.Z` fetches
   # it: from the archive GitHub serves, whose VERSION holds the tag. Building
   # that, not the checkout, both proves the tag reaches `--version` and puts
   # the exact build such an install looks up into the Cachix cache.
   nix:
-    needs: test
+    needs: [test, archive]
     uses: lambdalisue/nix-github-release/.github/workflows/build.yml@v0.1.0
     with:
       ref: ${{ github.event.release.tag_name }}
