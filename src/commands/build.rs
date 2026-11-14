@@ -463,6 +463,11 @@ fn finish_lume(
     run(&lume::run_args(staging))?;
     let address = lume::wait_until_ready_before(binary, staging, deadline)?;
     install_key(binary, staging, image, deadline)?;
+    run(&lume::ssh_args(
+        staging,
+        &lume::quiet_setup_assistant_command(),
+    ))
+    .with_context(|| format!("cannot keep Setup Assistant from opening in {staging}"))?;
 
     if let Some(script) = &spec.provision {
         let cfg_tools = config.tools();
