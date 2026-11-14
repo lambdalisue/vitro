@@ -184,6 +184,40 @@ pub fn ssh_args(name: &str, command: &str) -> Vec<String> {
     ]
 }
 
+/// A guest command that keeps Setup Assistant from opening at every later login.
+///
+/// The preset marks setup done, yet macOS still starts Setup Assistant as
+/// MiniBuddy at the first login, and MiniBuddy asks loginwindow to start it
+/// again — for the user and for the host — until somebody finishes its panes.
+/// Nobody does in a disposable VM, so the request would be cloned into every
+/// VM. It is removed only after MiniBuddy has gone, because a running one
+/// writes it back, and from every host's file, because a clone is a new host.
+///
+/// Runs in the account's own shell, which is zsh: `find` rather than a glob,
+/// which zsh refuses when nothing matches.
+pub fn quiet_setup_assistant_command() -> String {
+    let sudo = format!("printf '%s\\n' '{PRESET_PASSWORD}' | sudo -S -p ''");
+    [
+        "until pgrep -x Dock >/dev/null; do sleep 1; done".to_string(),
+        format!("{sudo} killall 'Setup Assistant' 2>/dev/null"),
+        "while pgrep -f 'Setup Assistant.app/Contents/MacOS' >/dev/null; do sleep 1; done"
+            .to_string(),
+        "defaults delete com.apple.loginwindow MiniBuddyLaunch 2>/dev/null".to_string(),
+        "defaults -currentHost delete com.apple.loginwindow MiniBuddyLaunch 2>/dev/null"
+            .to_string(),
+        "find ~/Library/Preferences/ByHost -name 'com.apple.loginwindow.*.plist' \
+         -exec /usr/libexec/PlistBuddy -c 'Delete :MiniBuddyLaunch' {} \\; 2>/dev/null"
+            .to_string(),
+        // An upgrade brings MiniBuddy back, and would restart the guest under
+        // whatever it was running.
+        format!(
+            "{sudo} defaults write /Library/Preferences/com.apple.SoftwareUpdate \
+             AutomaticallyInstallMacOSUpdates -bool false"
+        ),
+    ]
+    .join("; ")
+}
+
 pub fn get_args(name: &str) -> Vec<String> {
     vec!["get".into(), name.into(), "--format".into(), "json".into()]
 }
@@ -438,6 +472,44 @@ mod tests {
         assert!(args.starts_with("ssh macos whoami"), "{args}");
         assert!(args.contains("--user lume"), "{args}");
         assert!(args.contains("--password lume"), "{args}");
+    }
+
+    #[test]
+    fn the_setup_assistant_is_ended_only_once_the_desktop_is_up() {
+        let script = quiet_setup_assistant_command();
+        let dock = script.find("pgrep -x Dock").expect(&script);
+        let kill = script.find("killall 'Setup Assistant'").expect(&script);
+
+        assert!(dock < kill, "{script}");
+    }
+
+    #[test]
+    fn the_setup_assistant_is_kept_from_launching_for_the_user_and_for_any_host() {
+        let script = quiet_setup_assistant_command();
+        let kill = script.find("killall").expect(&script);
+        let user = script
+            .find("defaults delete com.apple.loginwindow MiniBuddyLaunch")
+            .expect(&script);
+        let hosts = script
+            .find("-name 'com.apple.loginwindow.*.plist'")
+            .expect(&script);
+
+        // Removed after the kill: a running Setup Assistant writes it back.
+        assert!(kill < user && kill < hosts, "{script}");
+    }
+
+    #[test]
+    fn macos_is_not_left_to_upgrade_itself_under_a_golden() {
+        let script = quiet_setup_assistant_command();
+
+        assert!(
+            script.contains("AutomaticallyInstallMacOSUpdates -bool false"),
+            "{script}"
+        );
+        assert!(
+            script.contains(&format!("printf '%s\\n' '{PRESET_PASSWORD}' | sudo -S")),
+            "{script}"
+        );
     }
 
     #[test]

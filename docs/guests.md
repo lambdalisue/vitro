@@ -188,6 +188,13 @@ an address and then open port 22, and those are not the same moment.
   instructions say, is found in `vitro ssh` and not in `vitro exec`.
 - `vitro wait --desktop` waits for the Dock, which runs once the preset's
   automatic logon has reached the desktop.
+- A VM opens on the desktop rather than on Setup Assistant. The preset's
+  account still gets Setup Assistant's post-login panes at its first login,
+  and they ask to be shown again until somebody finishes them, so the build
+  closes them and withdraws that request before the image becomes a golden.
+  It also turns off the automatic macOS install, which would bring them back
+  after an upgrade and restart the guest under whatever it was running. An
+  image built before vitro did this keeps opening on them; rebuild it.
 - Scripting another program's windows from `vitro exec` is refused. `osascript`
   driving System Events fails with "not allowed assistive access" (-1719),
   because Accessibility has to be granted in System Settings and nothing in
